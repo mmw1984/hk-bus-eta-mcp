@@ -3,10 +3,33 @@ import os
 import sys
 from typing import List, Dict, Any, Optional
 from fastmcp import FastMCP
+from fastapi import Security, HTTPException, status
+from fastapi.security import APIKeyHeader
 from hk_bus_eta import HKEta
 
+# API Key 認證設定
+API_KEY = os.getenv("HK_BUS_API_KEY", "")
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+async def verify_api_key(api_key: str = Security(api_key_header)):
+    """驗證 API Key（如果已設定）"""
+    # 如果未設定 API_KEY 環境變數，則不需要認證
+    if not API_KEY:
+        return True
+    
+    if api_key is None or api_key != API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="無效的 API Key"
+        )
+    return True
+
 # 初始化 FastMCP 伺服器
-mcp = FastMCP("香港交通 ETA")
+mcp = FastMCP(
+    "香港交通 ETA",
+    dependencies=[Security(verify_api_key)] if API_KEY else None
+)
 
 # 初始化 HKEta
 # 注意：HKEta 可能需要一些時間來初始化，因為它會獲取路線數據
