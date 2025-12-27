@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""
+測試 Vercel 函數
+"""
+from http.server import BaseHTTPRequestHandler
+import json
+
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        
+        response = {
+            "status": "ok",
+            "message": "Test endpoint working"
+        }
+        
+        self.wfile.write(json.dumps(response).encode())
