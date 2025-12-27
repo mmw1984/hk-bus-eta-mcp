@@ -357,8 +357,8 @@ def get_server_info() -> dict:
     }
 
 # Vercel 入口點 - 使用 FastMCP 的 http_app 屬性
-# 這會創建一個 ASGI 應用程式，Vercel 可以在 /mcp 路徑提供服務
-app = mcp.http_app(path="/mcp")
+# 這會創建一個 ASGI 應用程式，Vercel 可以提供服務
+app = mcp.http_app()
 
 if __name__ == "__main__":
     # 使用 PORT 環境變數進行部署（例如在 Vercel 或 Render 上）
