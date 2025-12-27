@@ -1,15 +1,12 @@
 {
-  "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "src/server.py",
-      "use": "@vercel/python"
-    }
-  ],
-  "routes": [
+      "source": "/mcp/(.*)",
+      "destination": "/api/mcp"
+    },
     {
-      "src": "/mcp(.*)",
-      "dest": "src/server.py"
+      "source": "/mcp",
+      "destination": "/api/mcp"
     }
   ]
 }

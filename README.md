@@ -1,7 +1,5 @@
 # 香港交通 ETA MCP 伺服器
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fmmw1984%2Fhk-bus-eta-mcp&env=HK_BUS_API_KEY&envDescription=API%20Key%20for%20authentication%20(optional)&project-name=hk-bus-eta-mcp&repository-name=hk-bus-eta-mcp)
-
 這是一個模型上下文協議（MCP）伺服器，提供香港公共交通的即時預計到達時間（ETA）。它使用 [FastMCP](https://github.com/jlowin/fastmcp) 框架和 [hk-bus-eta](https://github.com/hkbus/hk-bus-eta) 庫構建。
 
 ## 功能特色
@@ -46,14 +44,7 @@
 
 ## 部署
 
-### Vercel 一鍵部署
-
-點擊上方的 "Deploy with Vercel" 按鈕即可快速部署到 Vercel。
-
-**環境變數（可選）：**
-- `HK_BUS_API_KEY` - API 認證金鑰（如果設定此變數，所有請求需在 Header 中包含 `X-API-Key`）
-
-### 本地部署
+### Vercel
 
 此專案已配置為可在 Vercel 上部署。
 
@@ -63,27 +54,11 @@
 3. Vercel 將自動部署為 Python 無伺服器函數
 
 在 Claude Desktop 中使用，請將以下內容添加到您的配置：
-
-**無需 API Key：**
 ```json
 {
   "mcpServers": {
     "hk-transport": {
-      "url": "https://YOUR-DEPLOYMENT.vercel.app/mcp"
-    }
-  }
-}
-```
-
-**使用 API Key 認證：**
-```json
-{
-  "mcpServers": {
-    "hk-transport": {
-      "url": "https://YOUR-DEPLOYMENT.vercel.app/mcp",
-      "headers": {
-        "X-API-Key": "your-api-key-here"
-      }
+      "url": "https://hk-transport-mcp-updated.vercel.app/mcp"
     }
   }
 }
@@ -96,27 +71,14 @@
    pip install -r requirements.txt
    ```
 
-2. （可選）設定 API Key：
-   ```bash
-   # Windows PowerShell
-   $env:HK_BUS_API_KEY="your-secret-key"
-   
-   # Linux/Mac
-   export HK_BUS_API_KEY="your-secret-key"
-   ```
-
-3. 執行伺服器：
+2. 執行伺服器：
    ```bash
    python src/server.py
    ```
 
-4. 使用 MCP Inspector 測試：
+3. 使用 MCP Inspector 測試：
    ```bash
-   # 無需 API Key
    npx @modelcontextprotocol/inspector http://localhost:8000/mcp
-   
-   # 使用 API Key
-   npx @modelcontextprotocol/inspector http://localhost:8000/mcp --header "X-API-Key: your-secret-key"
    ```
 
 ## 致謝
