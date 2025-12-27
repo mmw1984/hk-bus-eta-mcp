@@ -1,0 +1,4 @@
+fastmcp
+hk-bus-eta
+requests
+python-dotenv
