@@ -57,8 +57,6 @@
 
 此專案已配置為可在 Vercel 上部署。
 
-**線上伺服器：** https://hk-transport-mcp-updated.vercel.app/mcp
-
 要部署您自己的實例：
 1. Fork 此儲存庫
 2. 將其匯入到 Vercel
