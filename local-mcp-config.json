@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "hk-transport": {
+      "command": "python",
+      "args": [
+        "-m",
+        "src.server"
+      ],
+      "cwd": "c:\\Users\\mmw1984\\Downloads\\hk-transport-mcp-updated"
+    }
+  }
+}
