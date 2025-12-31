@@ -176,19 +176,24 @@ def get_mtr_eta(stop_id: str, route: str, bound: str = "1") -> List[Dict[str, An
         return [{"error": str(e)}]
 
 @mcp.tool(description="獲取輕鐵（Light Rail）特定站點的 ETA")
-def get_lightrail_eta(stop_id: str, route: str, dest: str = "") -> List[Dict[str, Any]]:
+def get_lightrail_eta(stop_id: str, route: str, dest_zh: str = "", dest_en: str = "") -> List[Dict[str, Any]]:
     """
     獲取輕鐵（Light Rail）特定站點的預計到達時間。
     
     參數：
-        stop_id: 站點 ID
-        route: 路線編號
-        dest: 目的地
+        stop_id: 站點 ID（例如：'LR100'）
+        route: 路線編號（例如：'505'）
+        dest_zh: 目的地中文名稱（例如：'三聖'）
+        dest_en: 目的地英文名稱（例如：'Sam Shing'）
+    
+    提示：建議使用 get_eta 並提供 route_id 來獲取輕鐵 ETA，更為簡單準確。
     """
     if not hketa:
         return [{"error": "HKEta 未初始化"}]
     
     try:
+        # 構建 dest 字典，這是 hketa.lightrail 所需的格式
+        dest = {"zh": dest_zh, "en": dest_en}
         etas = hketa.lightrail(stop_id=stop_id, route=route, dest=dest)
         return etas
     except Exception as e:
@@ -200,9 +205,11 @@ def get_lrtfeeder_eta(stop_id: str, route: str, language: str = "en") -> List[Di
     獲取輕鐵接駁巴士特定站點的預計到達時間。
     
     參數：
-        stop_id: 站點 ID
-        route: 路線編號
+        stop_id: 站點 ID（例如：'K65-U010'）
+        route: 路線編號（例如：'K65'）
         language: 語言（'en' 或 'zh'）
+    
+    提示：建議使用 get_eta 並提供 route_id 來獲取輕鐵接駁巴士 ETA，更為簡單準確。
     """
     if not hketa:
         return [{"error": "HKEta 未初始化"}]
@@ -210,6 +217,8 @@ def get_lrtfeeder_eta(stop_id: str, route: str, language: str = "en") -> List[Di
     try:
         etas = hketa.lrtfeeder(stop_id=stop_id, route=route, language=language)
         return etas
+    except KeyError as e:
+        return [{"error": f"找不到站點或路線資料: {str(e)}，請確認 stop_id 格式正確（例如：'K65-U010'）"}]
     except Exception as e:
         return [{"error": str(e)}]
 
