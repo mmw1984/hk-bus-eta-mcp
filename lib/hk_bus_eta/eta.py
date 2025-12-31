@@ -14,6 +14,11 @@ import time
 from datetime import datetime, timezone
 import re
 import hashlib
+import os
+
+# 全局緩存 - 在 serverless 環境中保持實例熱態時重用
+_cached_db = None
+_cached_md5 = None
 
 def get_platform_display(plat, lang):
     number = int(plat) if isinstance(plat, str) else plat
@@ -32,14 +37,37 @@ class HKEta:
   stop_map = None
   
   def __init__(self):
-    md5 = requests.get("https://hkbus.github.io/hk-bus-crawling/routeFareList.md5").text
-    r = requests.get("https://hkbus.github.io/hk-bus-crawling/routeFareList.min.json")
+    global _cached_db, _cached_md5
+    
+    # 使用較短的超時時間
+    session = requests.Session()
+    session.timeout = 10
+    
+    # 檢查 MD5
+    md5 = session.get("https://hkbus.github.io/hk-bus-crawling/routeFareList.md5", timeout=5).text.strip()
+    
+    # 如果緩存存在且 MD5 匹配，直接使用緩存
+    if _cached_db is not None and _cached_md5 == md5:
+      self.holidays = _cached_db["holidays"]
+      self.route_list = _cached_db["routeList"]
+      self.stop_list = _cached_db["stopList"]
+      self.stop_map = _cached_db["stopMap"]
+      return
+    
+    # 下載新資料
+    r = session.get("https://hkbus.github.io/hk-bus-crawling/routeFareList.min.json", timeout=30)
     m = hashlib.md5()
     m.update(r.text.encode('utf-8'))
     if md5 != m.hexdigest():
       raise Exception("Error in accessing hk-eta-db, md5sum not match")
+    
     db = r.json()
-    self.holidays, self.route_list, self.stop_list, self.stop_map  = db["holidays"], db["routeList"], db["stopList"], db["stopMap"]
+    
+    # 更新緩存
+    _cached_db = db
+    _cached_md5 = md5
+    
+    self.holidays, self.route_list, self.stop_list, self.stop_map = db["holidays"], db["routeList"], db["stopList"], db["stopMap"]
     
 
   # 0-indexed seq
@@ -85,7 +113,7 @@ class HKEta:
     return _etas
     
   def kmb(self, stop_id, route, seq, service_type, co, bound ):
-    data = requests.get("https://data.etabus.gov.hk/v1/transport/kmb/eta/{}/{}/{}".format(stop_id, route, service_type)).json()['data']
+    data = requests.get("https://data.etabus.gov.hk/v1/transport/kmb/eta/{}/{}/{}".format(stop_id, route, service_type), timeout=5).json()['data']
     data = list(filter(lambda e: 'eta' in e and e['dir'] == bound, data))
     data.sort(key=lambda e: abs(seq - e['seq']))
     data = [e for e in data if e['seq'] == data[0]['seq']]
@@ -100,7 +128,7 @@ class HKEta:
     } for e in data]
   
   def ctb(self, stop_id, route, bound, seq):
-    data = requests.get("https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/{}/{}".format(stop_id, route)).json()['data']
+    data = requests.get("https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/{}/{}".format(stop_id, route), timeout=5).json()['data']
     data = list(filter(lambda e: 'eta' in e and e['dir'] in bound, data))
     data.sort(key=lambda e: abs(seq - e['seq']))
     data = [e for e in data if e['seq'] == data[0]['seq']]
@@ -121,7 +149,7 @@ class HKEta:
         "language": "zh"
       }, headers={
         "Content-Type": "text/plain"
-      }).json()["estimatedArrivals"]
+      }, timeout=5).json()["estimatedArrivals"]
       data = list(filter(lambda e: 'estimatedArrivalTime' in e, data))
       return [{
         "eta": e['estimatedArrivalTime'].replace(' ', 'T') + ".000+08:00",
@@ -140,7 +168,7 @@ class HKEta:
       "routeName": route
     }, headers={
       "Content-Type": "application/json"
-    }).json()['busStop']
+    }, timeout=5).json()['busStop']
     data = list(filter(lambda e: e["busStopId"] == stop_id, data))
     ret = []
     for buses in data:
@@ -163,7 +191,7 @@ class HKEta:
     return ret
   
   def mtr(self, stop_id, route, bound):
-    res = requests.get("https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php?line={}&sta={}".format(route, stop_id)).json()
+    res = requests.get("https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php?line={}&sta={}".format(route, stop_id), timeout=5).json()
     data, status = res["data"], res["status"]
     
     if status == 0:
@@ -181,7 +209,7 @@ class HKEta:
     return ret
   
   def lightrail(self, stop_id, route, dest):
-    platform_list = requests.get("https://rt.data.gov.hk/v1/transport/mtr/lrt/getSchedule?station_id={}".format(stop_id[2:])).json()["platform_list"]
+    platform_list = requests.get("https://rt.data.gov.hk/v1/transport/mtr/lrt/getSchedule?station_id={}".format(stop_id[2:]), timeout=5).json()["platform_list"]
     ret = []
     for platform in platform_list:
       route_list, platform_id = platform["route_list"], platform["platform_id"]
@@ -205,7 +233,7 @@ class HKEta:
     return ret
 
   def gmb(self, gtfs_id, stop_id, bound, seq):
-    data = requests.get("https://data.etagmb.gov.hk/eta/route-stop/{}/{}".format(gtfs_id, stop_id)).json()["data"]
+    data = requests.get("https://data.etagmb.gov.hk/eta/route-stop/{}/{}".format(gtfs_id, stop_id), timeout=5).json()["data"]
     data = list(filter(lambda e: (e['route_seq'] == 1 and bound == "O") or (e['route_seq'] == 2 and bound == "I"), data))
     data = list(filter(lambda e: e["stop_seq"] == seq + 1, data))
     ret = []

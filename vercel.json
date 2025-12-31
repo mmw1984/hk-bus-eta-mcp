@@ -1,7 +1,8 @@
 {
   "functions": {
     "api/mcp.py": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "memory": 1024
     }
   },
   "rewrites": [
@@ -12,6 +13,17 @@
     {
       "source": "/mcp",
       "destination": "/api/mcp"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/mcp",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
     }
   ]
 }
