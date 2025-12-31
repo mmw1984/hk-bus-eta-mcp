@@ -18,5 +18,6 @@ sys.path.insert(0, os.path.join(parent_dir, 'src'))
 from src.server import mcp
 
 # 創建 ASGI 應用程式 - Vercel 原生支援 ASGI
-# 使用 streamable-http transport（推薦用於 serverless）
-app = mcp.http_app()
+# 使用 stateless_http=True 以適應 serverless 環境
+# 這樣每個請求都是獨立的，不需要維護 session 狀態
+app = mcp.http_app(stateless_http=True)
