@@ -3,6 +3,14 @@
     "api/mcp.py": {
       "maxDuration": 60,
       "memory": 1024
+    },
+    "api/stream.py": {
+      "maxDuration": 300,
+      "memory": 1024
+    },
+    "api/batch_stream.py": {
+      "maxDuration": 300,
+      "memory": 1024
     }
   },
   "rewrites": [
@@ -13,6 +21,14 @@
     {
       "source": "/mcp",
       "destination": "/api/mcp"
+    },
+    {
+      "source": "/stream",
+      "destination": "/api/stream"
+    },
+    {
+      "source": "/batch",
+      "destination": "/api/batch_stream"
     }
   ],
   "headers": [
@@ -22,6 +38,40 @@
         {
           "key": "Cache-Control",
           "value": "no-cache"
+        }
+      ]
+    },
+    {
+      "source": "/stream",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        },
+        {
+          "key": "Content-Type",
+          "value": "text/event-stream"
+        },
+        {
+          "key": "Connection",
+          "value": "keep-alive"
+        }
+      ]
+    },
+    {
+      "source": "/batch",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        },
+        {
+          "key": "Content-Type",
+          "value": "text/event-stream"
+        },
+        {
+          "key": "Connection",
+          "value": "keep-alive"
         }
       ]
     }

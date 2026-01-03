@@ -11,6 +11,7 @@
 - **多營運商支援**：支援九巴（KMB）、城巴/新巴（CTB）、專線小巴（GMB）、港鐵（MTR）、輕鐵（Light Rail）、輕鐵接駁巴士（LRT Feeder）、新大嶼山巴士（NLB）。
 - **站點搜尋**：根據名稱搜尋站點。
 - **假期資訊**：獲取香港公眾假期列表。
+- **🚀 串流 API**：支援 Server-Sent Events (SSE) 的即時串流響應，提供進度更新和批次處理功能。
 
 ## 工具列表
 
@@ -42,16 +43,42 @@
 - `get_holidays()` - 獲取香港公眾假期列表
 - `get_server_info()` - 獲取伺服器元數據
 
+## 串流 API
+
+此專案支援使用 Server-Sent Events (SSE) 的串流響應，提供以下功能：
+
+### 端點
+
+- **`/stream`** - 單一路線串流（ETA、站點、搜尋）
+- **`/batch`** - 批次處理與進度追蹤（批次 ETA、附近站點、即時更新）
+
+### 使用範例
+
+```javascript
+// 串流 ETA 更新
+const eventSource = new EventSource('/stream?action=eta&route_id=ROUTE_ID');
+eventSource.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log('收到:', data);
+};
+```
+
+詳細文檔請參閱 [STREAMING_API.md](STREAMING_API.md)
+
+### 互動式示範
+
+開啟 `streaming_demo.html` 在瀏覽器中查看串流 API 的即時示範。
+
 ## 部署
 
 ### Vercel
 
-此專案已配置為可在 Vercel 上部署。
+此專案已配置為可在 Vercel 上部署，包含串流支援。
 
 要部署您自己的實例：
 1. Fork 此儲存庫
 2. 將其匯入到 Vercel
-3. Vercel 將自動部署為 Python 無伺服器函數
+3. Vercel 將自動部署為 Python 無伺服器函數，並啟用串流功能
 
 在 Claude Desktop 中使用，請將以下內容添加到您的配置：
 ```json
@@ -63,6 +90,12 @@
   }
 }
 ```
+
+### 串流端點
+
+部署後，您可以訪問以下串流端點：
+- `https://your-domain.vercel.app/stream` - 單一路線串流
+- `https://your-domain.vercel.app/batch` - 批次處理串流
 
 ### 本地開發
 

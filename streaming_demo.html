@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HK Transport MCP - Streaming Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .demo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .demo-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .demo-card h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+        
+        .demo-card p {
+            color: #666;
+            margin-bottom: 15px;
+            line-height: 1.6;
+        }
+        
+        .input-group {
+            margin-bottom: 15px;
+        }
+        
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 500;
+        }
+        
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .output {
+            margin-top: 20px;
+            background: #f5f5f5;
+            border-radius: 6px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        
+        .output .event {
+            padding: 8px;
+            margin-bottom: 5px;
+            background: white;
+            border-radius: 4px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .output .event.error {
+            border-left-color: #f44336;
+            background: #ffebee;
+        }
+        
+        .output .event.success {
+            border-left-color: #4caf50;
+            background: #e8f5e9;
+        }
+        
+        .output .event pre {
+            margin: 5px 0 0 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 6px;
+            font-weight: 600;
+        }
+        
+        .status.connecting {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+        
+        .status.streaming {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        
+        .status.complete {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+        
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚌 HK Transport Streaming API Demo</h1>
+        
+        <div class="demo-grid">
+            <!-- Stream ETA Demo -->
+            <div class="demo-card">
+                <h2>📡 Stream ETA</h2>
+                <p>Get real-time ETA updates for a specific route and stop.</p>
+                
+                <div class="input-group">
+                    <label>Route ID:</label>
+                    <input type="text" id="eta-route-id" value="1+1+CHUK YUEN ESTATE+STAR FERRY" />
+                </div>
+                
+                <button onclick="streamETA()">Start Streaming</button>
+                
+                <div id="eta-status"></div>
+                <div id="eta-output" class="output"></div>
+            </div>
+            
+            <!-- Stream Stops Demo -->
+            <div class="demo-card">
+                <h2>🛑 Stream Route Stops</h2>
+                <p>Get all stops for a route, delivered progressively.</p>
+                
+                <div class="input-group">
+                    <label>Route ID:</label>
+                    <input type="text" id="stops-route-id" value="1+1+CHUK YUEN ESTATE+STAR FERRY" />
+                </div>
+                
+                <button onclick="streamStops()">Start Streaming</button>
+                
+                <div id="stops-status"></div>
+                <div id="stops-output" class="output"></div>
+            </div>
+            
+            <!-- Search Demo -->
+            <div class="demo-card">
+                <h2>🔍 Stream Search</h2>
+                <p>Search for routes or stops with streaming results.</p>
+                
+                <div class="input-group">
+                    <label>Keyword:</label>
+                    <input type="text" id="search-keyword" value="962" />
+                </div>
+                
+                <button onclick="streamSearch()">Start Search</button>
+                
+                <div id="search-status"></div>
+                <div id="search-output" class="output"></div>
+            </div>
+            
+            <!-- Batch ETA Demo -->
+            <div class="demo-card">
+                <h2>📦 Batch ETA</h2>
+                <p>Fetch ETA for multiple routes with progress tracking.</p>
+                
+                <div class="input-group">
+                    <label>Route IDs (comma-separated):</label>
+                    <input type="text" id="batch-route-ids" value="1+1+CHUK YUEN ESTATE+STAR FERRY,2+2+BAMBOO GROVE+STAR FERRY" />
+                </div>
+                
+                <button onclick="streamBatch()">Start Batch</button>
+                
+                <div id="batch-status"></div>
+                <div id="batch-progress"></div>
+                <div id="batch-output" class="output"></div>
+            </div>
+            
+            <!-- Nearby Stops Demo -->
+            <div class="demo-card">
+                <h2>📍 Nearby Stops</h2>
+                <p>Find stops near a location (Hong Kong Central by default).</p>
+                
+                <div class="input-group">
+                    <label>Latitude:</label>
+                    <input type="text" id="nearby-lat" value="22.2819" />
+                </div>
+                
+                <div class="input-group">
+                    <label>Longitude:</label>
+                    <input type="text" id="nearby-lon" value="114.1580" />
+                </div>
+                
+                <button onclick="streamNearby()">Find Nearby</button>
+                
+                <div id="nearby-status"></div>
+                <div id="nearby-output" class="output"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Get the base URL (use your Vercel URL in production)
+        const BASE_URL = window.location.origin;
+        
+        let activeStreams = {};
+        
+        function createEventDiv(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `event ${type}`;
+            
+            const pre = document.createElement('pre');
+            pre.textContent = typeof message === 'string' ? message : JSON.stringify(message, null, 2);
+            
+            div.appendChild(pre);
+            return div;
+        }
+        
+        function updateStatus(elementId, message, type = 'streaming') {
+            const statusDiv = document.getElementById(elementId);
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+        }
+        
+        function updateProgress(elementId, percent) {
+            let progressDiv = document.getElementById(elementId);
+            if (!progressDiv.querySelector('.progress-bar')) {
+                progressDiv.innerHTML = '<div class="progress-bar"><div class="progress-bar-fill"></div></div>';
+            }
+            const fill = progressDiv.querySelector('.progress-bar-fill');
+            fill.style.width = percent + '%';
+        }
+        
+        function streamETA() {
+            const routeId = document.getElementById('eta-route-id').value;
+            const outputDiv = document.getElementById('eta-output');
+            outputDiv.innerHTML = '';
+            
+            updateStatus('eta-status', 'Connecting...', 'connecting');
+            
+            const url = `${BASE_URL}/stream?action=eta&route_id=${encodeURIComponent(routeId)}&language=en`;
+            const eventSource = new EventSource(url);
+            activeStreams['eta'] = eventSource;
+            
+            eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.status === 'connecting') {
+                    updateStatus('eta-status', data.message, 'connecting');
+                } else if (data.status === 'complete') {
+                    updateStatus('eta-status', '✅ Complete!', 'complete');
+                    eventSource.close();
+                } else if (data.error) {
+                    updateStatus('eta-status', '❌ Error: ' + data.error, 'error');
+                    outputDiv.appendChild(createEventDiv(data, 'error'));
+                    eventSource.close();
+                } else {
+                    updateStatus('eta-status', `📡 Streaming... (${data.index + 1}/${data.total})`, 'streaming');
+                    outputDiv.appendChild(createEventDiv(data.eta));
+                    outputDiv.scrollTop = outputDiv.scrollHeight;
+                }
+            };
+            
+            eventSource.onerror = () => {
+                updateStatus('eta-status', '❌ Connection Error', 'error');
+                eventSource.close();
+            };
+        }
+        
+        function streamStops() {
+            const routeId = document.getElementById('stops-route-id').value;
+            const outputDiv = document.getElementById('stops-output');
+            outputDiv.innerHTML = '';
+            
+            updateStatus('stops-status', 'Connecting...', 'connecting');
+            
+            const url = `${BASE_URL}/stream?action=stops&route_id=${encodeURIComponent(routeId)}&language=en`;
+            const eventSource = new EventSource(url);
+            activeStreams['stops'] = eventSource;
+            
+            let stopCount = 0;
+            
+            eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.status === 'connecting') {
+                    updateStatus('stops-status', data.message, 'connecting');
+                } else if (data.status === 'complete') {
+                    updateStatus('stops-status', `✅ Complete! (${stopCount} stops)`, 'complete');
+                    eventSource.close();
+                } else if (data.error) {
+                    updateStatus('stops-status', '❌ Error: ' + data.error, 'error');
+                    outputDiv.appendChild(createEventDiv(data, 'error'));
+                    eventSource.close();
+                } else if (data.stop_id) {
+                    stopCount++;
+                    updateStatus('stops-status', `📡 Streaming... (${stopCount} stops)`, 'streaming');
+                    outputDiv.appendChild(createEventDiv(`${data.seq + 1}. ${data.name}`));
+                    outputDiv.scrollTop = outputDiv.scrollHeight;
+                }
+            };
+            
+            eventSource.onerror = () => {
+                updateStatus('stops-status', '❌ Connection Error', 'error');
+                eventSource.close();
+            };
+        }
+        
+        function streamSearch() {
+            const keyword = document.getElementById('search-keyword').value;
+            const outputDiv = document.getElementById('search-output');
+            outputDiv.innerHTML = '';
+            
+            updateStatus('search-status', 'Searching...', 'connecting');
+            
+            const url = `${BASE_URL}/stream?action=search&keyword=${encodeURIComponent(keyword)}&type=routes`;
+            const eventSource = new EventSource(url);
+            activeStreams['search'] = eventSource;
+            
+            let resultCount = 0;
+            
+            eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.status === 'searching') {
+                    updateStatus('search-status', data.message, 'connecting');
+                } else if (data.status === 'complete') {
+                    updateStatus('search-status', `✅ Complete! (${resultCount} results)`, 'complete');
+                    eventSource.close();
+                } else if (data.error) {
+                    updateStatus('search-status', '❌ Error: ' + data.error, 'error');
+                    outputDiv.appendChild(createEventDiv(data, 'error'));
+                    eventSource.close();
+                } else if (data.route_id) {
+                    resultCount++;
+                    updateStatus('search-status', `🔍 Found ${resultCount} results...`, 'streaming');
+                    outputDiv.appendChild(createEventDiv(`${resultCount}. ${data.route_id}`));
+                    outputDiv.scrollTop = outputDiv.scrollHeight;
+                }
+            };
+            
+            eventSource.onerror = () => {
+                updateStatus('search-status', '❌ Connection Error', 'error');
+                eventSource.close();
+            };
+        }
+        
+        function streamBatch() {
+            const routeIds = document.getElementById('batch-route-ids').value;
+            const outputDiv = document.getElementById('batch-output');
+            outputDiv.innerHTML = '';
+            
+            updateStatus('batch-status', 'Starting...', 'connecting');
+            
+            const url = `${BASE_URL}/batch?mode=batch&route_ids=${encodeURIComponent(routeIds)}&language=en`;
+            const eventSource = new EventSource(url);
+            activeStreams['batch'] = eventSource;
+            
+            eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.status === 'started') {
+                    updateStatus('batch-status', `Processing ${data.total} routes...`, 'streaming');
+                    updateProgress('batch-progress', 0);
+                } else if (data.status === 'processing') {
+                    updateStatus('batch-status', `Processing ${data.current}/${data.total}...`, 'streaming');
+                    updateProgress('batch-progress', data.progress_percent);
+                } else if (data.status === 'result') {
+                    outputDiv.appendChild(createEventDiv(`Route ${data.route_id}: ${data.etas.length} ETAs`, 'success'));
+                    outputDiv.scrollTop = outputDiv.scrollHeight;
+                } else if (data.status === 'complete') {
+                    updateStatus('batch-status', `✅ Complete! (${data.total_processed} routes)`, 'complete');
+                    updateProgress('batch-progress', 100);
+                    eventSource.close();
+                } else if (data.error || data.status === 'error') {
+                    outputDiv.appendChild(createEventDiv(data, 'error'));
+                    outputDiv.scrollTop = outputDiv.scrollHeight;
+                }
+            };
+            
+            eventSource.onerror = () => {
+                updateStatus('batch-status', '❌ Connection Error', 'error');
+                eventSource.close();
+            };
+        }
+        
+        function streamNearby() {
+            const lat = document.getElementById('nearby-lat').value;
+            const lon = document.getElementById('nearby-lon').value;
+            const outputDiv = document.getElementById('nearby-output');
+            outputDiv.innerHTML = '';
+            
+            updateStatus('nearby-status', 'Searching...', 'connecting');
+            
+            const url = `${BASE_URL}/batch?mode=nearby&lat=${lat}&lon=${lon}&radius=0.5`;
+            const eventSource = new EventSource(url);
+            activeStreams['nearby'] = eventSource;
+            
+            let stopCount = 0;
+            
+            eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.status === 'searching') {
+                    updateStatus('nearby-status', data.message, 'connecting');
+                } else if (data.status === 'found') {
+                    updateStatus('nearby-status', `Found ${data.count} stops nearby`, 'streaming');
+                } else if (data.status === 'stop_info') {
+                    stopCount++;
+                    const stop = data.stop;
+                    outputDiv.appendChild(createEventDiv(`${stopCount}. ${stop.name_en} (${stop.distance_km}km)`));
+                    outputDiv.scrollTop = outputDiv.scrollHeight;
+                } else if (data.status === 'complete') {
+                    updateStatus('nearby-status', `✅ Complete! (${stopCount} stops)`, 'complete');
+                    eventSource.close();
+                } else if (data.error) {
+                    updateStatus('nearby-status', '❌ Error: ' + data.error, 'error');
+                    outputDiv.appendChild(createEventDiv(data, 'error'));
+                    eventSource.close();
+                }
+            };
+            
+            eventSource.onerror = () => {
+                updateStatus('nearby-status', '❌ Connection Error', 'error');
+                eventSource.close();
+            };
+        }
+        
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            Object.values(activeStreams).forEach(stream => {
+                if (stream) stream.close();
+            });
+        });
+    </script>
+</body>
+</html>

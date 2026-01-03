@@ -17,13 +17,25 @@ except Exception as e:
     hketa = None
 
 @mcp.tool(description="搜尋香港巴士或交通路線 ID，使用關鍵字（例如：'1'、'962X'、'TCL'）")
-def search_routes(keyword: str) -> List[str]:
-    """搜尋符合關鍵字的路線 ID。"""
+def search_routes(keyword: str) -> List[Dict[str, Any]]:
+    """搜尋符合關鍵字的路線 ID，包含營運商資訊。"""
     if not hketa:
-        return ["錯誤：HKEta 未初始化"]
+        return [{"error": "HKEta 未初始化"}]
     
     keyword = keyword.upper()
-    routes = [r for r in hketa.route_list.keys() if keyword in r]
+    routes = []
+    
+    for route_id, route_info in hketa.route_list.items():
+        if keyword in route_id:
+            routes.append({
+                "route_id": route_id,
+                "operators": route_info.get("co", []),
+                "origin": route_info.get("orig", {}).get("zh", ""),
+                "destination": route_info.get("dest", {}).get("zh", ""),
+                "origin_en": route_info.get("orig", {}).get("en", ""),
+                "destination_en": route_info.get("dest", {}).get("en", "")
+            })
+    
     return routes[:20]  # 限制為前 20 個結果
 
 @mcp.tool(description="獲取香港交通路線特定站點的預計到達時間（ETA）")
@@ -142,19 +154,135 @@ def get_gmb_eta(gtfs_id: str, stop_id: str, bound: str = "1", seq: int = 0) -> L
     獲取專線小巴（GMB）特定站點的預計到達時間。
     
     參數：
-        gtfs_id: GTFS 路線 ID
+        gtfs_id: GTFS 路線 ID（例如：'HKI-20' 或 '37M'）
         stop_id: 站點 ID
-        bound: 方向
+        bound: 方向（'1' 或 '2'）
         seq: 站點序號
+    
+    注意：此方法可能不穩定，建議使用 get_eta() 通用方法配合完整的 route_id。
+    例如：get_eta(route_id="20+1+San Po Kong+Tsz Wan Shan (North) (Circular)", seq=6, language="zh")
     """
     if not hketa:
         return [{"error": "HKEta 未初始化"}]
     
     try:
+        # 記錄調試信息
+        print(f"[GMB ETA] 查詢: gtfs_id={gtfs_id}, stop_id={stop_id}, bound={bound}, seq={seq}", file=sys.stderr)
+        
         etas = hketa.gmb(gtfs_id=gtfs_id, stop_id=stop_id, bound=bound, seq=seq)
+        
+        # 如果結果為空，嘗試使用通用方法
+        if not etas or len(etas) == 0:
+            print(f"[GMB ETA] 空結果 - 嘗試使用通用方法", file=sys.stderr)
+            
+            # 嘗試搜索匹配的 GMB 路線
+            route_number = gtfs_id.split('-')[-1] if '-' in gtfs_id else gtfs_id
+            matching_gmb_routes = []
+            
+            for route_id, route_info in hketa.route_list.items():
+                if route_number in route_id and 'gmb' in [co.lower() for co in route_info.get('co', [])]:
+                    matching_gmb_routes.append({
+                        "route_id": route_id,
+                        "origin_zh": route_info.get("orig", {}).get("zh", ""),
+                        "destination_zh": route_info.get("dest", {}).get("zh", "")
+                    })
+            
+            return [{
+                "info": "目前無可用的實時到站資料",
+                "reason": "此綠專小巴路線可能沒有 GPS 追蹤或當前時段無服務",
+                "suggestion": "建議使用 get_eta(route_id=..., seq=站點序號) 通用方法查詢",
+                "matching_gmb_routes": matching_gmb_routes[:5],
+                "example": "get_eta(route_id='20+1+San Po Kong+Tsz Wan Shan (North) (Circular)', seq=6, language='zh')"
+            }]
+        
         return etas
+        
+    except KeyError as e:
+        # API 數據格式錯誤 - 嘗試使用通用方法
+        print(f"[GMB ETA] KeyError: {e} - 嘗試搜索替代路線", file=sys.stderr)
+        
+        # 搜索匹配的 GMB 路線
+        route_number = gtfs_id.split('-')[-1] if '-' in gtfs_id else gtfs_id
+        matching_gmb_routes = []
+        
+        for route_id, route_info in hketa.route_list.items():
+            if route_number in route_id and 'gmb' in [co.lower() for co in route_info.get('co', [])]:
+                matching_gmb_routes.append({
+                    "route_id": route_id,
+                    "origin_zh": route_info.get("orig", {}).get("zh", ""),
+                    "destination_zh": route_info.get("dest", {}).get("zh", "")
+                })
+        
+        return [{
+            "error": "直接 GMB API 查詢失敗",
+            "suggestion": "請使用 get_eta() 通用方法配合下列路線 ID",
+            "matching_gmb_routes": matching_gmb_routes[:5],
+            "example": "get_eta(route_id='20+1+San Po Kong+Tsz Wan Shan (North) (Circular)', seq=6, language='zh')"
+        }]
     except Exception as e:
-        return [{"error": str(e)}]
+        print(f"[GMB ETA] Exception: {type(e).__name__}: {e}", file=sys.stderr)
+        return [{
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "suggestion": "請使用 search_routes_by_operator('gmb', '路線編號') 搜尋正確的路線 ID，然後使用 get_eta() 查詢"
+        }]
+
+@mcp.tool(description="獲取綠專小巴路線的站點序號信息（用於 get_eta 查詢）")
+def get_gmb_route_stops(route_number: str) -> List[Dict[str, Any]]:
+    """
+    搜索綠專小巴路線並返回所有站點及其序號。
+    
+    參數：
+        route_number: 路線編號（例如：'20', '37M'）
+    
+    返回：
+        找到的 GMB 路線及其站點列表，包含用於 get_eta() 查詢的 seq 序號
+    """
+    if not hketa:
+        return [{"error": "HKEta 未初始化"}]
+    
+    route_number_upper = route_number.upper()
+    results = []
+    
+    for route_id, route_info in hketa.route_list.items():
+        # 檢查是否為 GMB 路線且匹配路線編號
+        operators = [co.lower() for co in route_info.get('co', [])]
+        if 'gmb' not in operators:
+            continue
+        
+        # 檢查路線編號匹配（路線 ID 格式: "20+1+San Po Kong+..."）
+        route_parts = route_id.split('+')
+        if len(route_parts) >= 1 and route_parts[0].upper() == route_number_upper:
+            # 獲取此路線的站點
+            stops_info = []
+            for company, stop_ids in route_info.get("stops", {}).items():
+                for seq, stop_id in enumerate(stop_ids):
+                    stop_data = hketa.stop_list.get(stop_id, {})
+                    stops_info.append({
+                        "seq": seq,
+                        "stop_id": stop_id,
+                        "name_zh": stop_data.get("name", {}).get("zh", ""),
+                        "name_en": stop_data.get("name", {}).get("en", ""),
+                        "location": stop_data.get("location", {})
+                    })
+            
+            results.append({
+                "route_id": route_id,
+                "origin_zh": route_info.get("orig", {}).get("zh", ""),
+                "destination_zh": route_info.get("dest", {}).get("zh", ""),
+                "origin_en": route_info.get("orig", {}).get("en", ""),
+                "destination_en": route_info.get("dest", {}).get("en", ""),
+                "stops": stops_info,
+                "usage_example": f"get_eta(route_id='{route_id}', seq=站點序號, language='zh')"
+            })
+    
+    if not results:
+        return [{
+            "error": f"找不到綠專小巴路線 {route_number}",
+            "suggestion": "請使用 search_routes_by_operator('gmb') 查看所有 GMB 路線"
+        }]
+    
+    return results
 
 @mcp.tool(description="獲取港鐵（MTR）特定站點的 ETA")
 def get_mtr_eta(stop_id: str, route: str, bound: str = "1") -> List[Dict[str, Any]]:
@@ -295,6 +423,47 @@ def search_stops(keyword: str, language: str = "en") -> List[Dict[str, Any]]:
             })
             if len(results) >= 20:  # 限制結果數量
                 break
+    
+    return results
+
+@mcp.tool(description="搜尋特定營運商的路線（例如：綠專小巴 GMB）")
+def search_routes_by_operator(operator: str = "gmb", keyword: str = "") -> List[Dict[str, Any]]:
+    """
+    根據營運商搜尋路線，可選擇性地過濾關鍵字。
+    
+    參數：
+        operator: 營運商代碼（'gmb', 'kmb', 'ctb', 'nlb', 'mtr', 'lightrail', 'lrtfeeder'）
+        keyword: 可選的路線編號關鍵字（例如：'37M', '20'）
+    
+    返回：
+        符合條件的路線列表
+    """
+    if not hketa:
+        return [{"error": "HKEta 未初始化"}]
+    
+    operator_lower = operator.lower()
+    keyword_upper = keyword.upper() if keyword else ""
+    results = []
+    
+    for route_id, route_info in hketa.route_list.items():
+        operators = [co.lower() for co in route_info.get("co", [])]
+        
+        # 檢查營運商匹配
+        if operator_lower in operators:
+            # 如果有關鍵字，檢查是否匹配
+            if not keyword_upper or keyword_upper in route_id:
+                results.append({
+                    "route_id": route_id,
+                    "operators": route_info.get("co", []),
+                    "origin_zh": route_info.get("orig", {}).get("zh", ""),
+                    "destination_zh": route_info.get("dest", {}).get("zh", ""),
+                    "origin_en": route_info.get("orig", {}).get("en", ""),
+                    "destination_en": route_info.get("dest", {}).get("en", ""),
+                    "service_type": route_info.get("service_type", "")
+                })
+                
+                if len(results) >= 50:  # 限制結果數量
+                    break
     
     return results
 
