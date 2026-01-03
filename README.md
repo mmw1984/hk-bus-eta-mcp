@@ -4,10 +4,12 @@
 
 ## 功能特色
 
-- **搜尋路線**：使用關鍵字查找路線 ID（例如："962X"、"TCL"）。
+- **搜尋路線**：使用關鍵字查找路線 ID，每個方向獨立顯示（例如："962X"、"TCL"）。
+- **優化的 ETA 工作流程**：新增便捷工具，支援一鍵查詢整條路線所有站點的 ETA。
 - **獲取 ETA**：獲取特定路線和站點的即時到達時間。
 - **路線詳情**：獲取路線的詳細資訊，包括其站點。
 - **路線站點**：獲取路線的所有站點及其中英文名稱。
+- **批量查詢**：一次性獲取路線所有站點的 ETA，按順序排列。
 - **多營運商支援**：支援九巴（KMB）、城巴/新巴（CTB）、專線小巴（GMB）、港鐵（MTR）、輕鐵（Light Rail）、輕鐵接駁巴士（LRT Feeder）、新大嶼山巴士（NLB）。
 - **站點搜尋**：根據名稱搜尋站點。
 - **假期資訊**：獲取香港公眾假期列表。
@@ -16,10 +18,12 @@
 ## 工具列表
 
 ### 路線相關
-- `search_routes(keyword: str)` - 搜尋路線 ID
+- `search_routes(keyword: str, operator: str)` - 🆕 搜尋路線，每個方向獨立顯示，可按營運商過濾
 - `get_route_details(route_id: str)` - 獲取路線資訊
-- `get_route_stops(route_id: str, language: str)` - 獲取所有站點及其名稱和位置
+- `get_route_stops(route_id: str, language: str)` - 🆕 獲取任何路線的所有站點（支援所有營運商）
+- `get_route_all_stops_eta(route_id: str, language: str)` - 🆕 一次性查詢路線所有站點的 ETA
 - `get_all_routes()` - 獲取所有可用路線列表
+- `search_routes_by_operator(operator: str, keyword: str)` - 按營運商搜尋路線
 
 ### ETA 查詢（通用）
 - `get_eta(route_id: str, seq: int, language: str)` - 獲取即時 ETA
@@ -113,6 +117,30 @@ eventSource.onmessage = (event) => {
    ```bash
    npx @modelcontextprotocol/inspector http://localhost:8000/mcp
    ```
+
+## 使用指南
+
+### 快速開始：查詢路線 ETA
+
+```python
+# 步驟 1: 搜尋路線（例如：小巴 20 號）
+search_routes(keyword="20", operator="gmb")
+
+# 步驟 2: 一次性獲取所有站點 ETA
+get_route_all_stops_eta(
+    route_id="20+1+San Po Kong+Tsz Wan Shan (North) (Circular)",
+    language="zh"
+)
+```
+
+### 進階用法
+
+查看 [ETA_WORKFLOW_GUIDE.md](./ETA_WORKFLOW_GUIDE.md) 了解：
+- 優化的查詢工作流程
+- 批量 ETA 查詢技巧
+- 多營運商路線比較
+- 效能優化建議
+
 
 ## 致謝
 
