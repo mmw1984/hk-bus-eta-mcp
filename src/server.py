@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 import os
 import sys
+import json
 from typing import List, Dict, Any, Optional
 from fastmcp import FastMCP
 from hk_bus_eta import HKEta
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# AI 智能檢索設定（OpenAI 格式，可透過環境變數自定義）
+AI_API_KEY = os.environ.get("AI_API_KEY", "")
+AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+AI_MODEL = os.environ.get("AI_MODEL", "glm-4-flash")
 
 # 初始化 FastMCP 伺服器
 mcp = FastMCP("香港交通 ETA")
@@ -695,6 +704,245 @@ def get_stop_info(stop_id: str) -> Dict[str, Any]:
         return {"error": "找不到站點"}
     
     return stop_info
+
+@mcp.tool(description="AI 智能檢索：用自然語言搜尋香港交通路線和站點（需設定 AI_API_KEY 環境變數）")
+def ai_search(query: str, language: str = "zh") -> Dict[str, Any]:
+    """
+    使用 AI 理解自然語言查詢，智能搜尋香港交通路線和站點。
+
+    支援各種自然語言查詢，例如：
+    - "從旺角去銅鑼灣有什麼巴士？"
+    - "九巴 1 號路線終點站"
+    - "MTR Tsuen Wan Line stops"
+    - "bus from Mong Kok to Causeway Bay"
+    - "去機場有什麼路線"
+
+    AI 會自動解析查詢意圖，提取路線編號、起點、終點、站點名稱等資訊，
+    再調用相應搜尋功能，返回最相關的結果。
+
+    參數：
+        query: 自然語言查詢（中文或英文均可）
+        language: 返回結果語言（'zh' 或 'en'，預設 'zh'）
+
+    環境變數（可在 .env 或 Vercel 設定）：
+        AI_API_KEY   - AI API 金鑰（必填）
+        AI_BASE_URL  - API 端點（預設：https://open.bigmodel.cn/api/paas/v4）
+        AI_MODEL     - 模型名稱（預設：glm-4-flash）
+
+    返回：
+        包含 AI 解析結果及匹配路線/站點資訊的字典
+    """
+    if not AI_API_KEY:
+        return {
+            "error": "AI 功能未啟用",
+            "detail": "請設定 AI_API_KEY 環境變數以啟用 AI 智能檢索功能",
+            "env_vars": {
+                "AI_API_KEY": "（必填）AI API 金鑰",
+                "AI_BASE_URL": f"（選填）API 端點，預設：{AI_BASE_URL}",
+                "AI_MODEL": f"（選填）模型名稱，預設：{AI_MODEL}"
+            }
+        }
+
+    if not hketa:
+        return {"error": "HKEta 未初始化"}
+
+    try:
+        from openai import OpenAI
+    except ImportError:
+        return {"error": "openai 套件未安裝，請執行 pip install openai"}
+
+    # 構建 AI 系統提示
+    system_prompt = """你是香港公共交通搜尋助手。分析用戶的查詢，提取以下資訊並以 JSON 格式回應：
+
+{
+  "intent": "route_search|stop_search|eta_query|general_info",
+  "route_number": "路線編號（如有），例如 '1', '962X', 'TCL'",
+  "operator": "營運商（如有）：kmb/ctb/gmb/mtr/nlb/lightrail/lrtfeeder",
+  "origin": "出發地（中文或英文）",
+  "destination": "目的地（中文或英文）",
+  "stop_name": "站點名稱（如有）",
+  "keywords": ["其他相關搜尋關鍵字"],
+  "summary": "用一句話說明用戶的需求"
+}
+
+欄位說明：
+- intent: route_search（搜尋路線）、stop_search（搜尋站點）、eta_query（查詢到站時間）、general_info（一般資訊）
+- 未提及的欄位留空字串 "" 或空陣列 []
+- keywords 提取可用於搜尋的中英文關鍵字
+- 只回傳 JSON，不要其他文字"""
+
+    try:
+        client = OpenAI(api_key=AI_API_KEY, base_url=AI_BASE_URL)
+        response = client.chat.completions.create(
+            model=AI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": query}
+            ],
+            temperature=0.1,
+            max_tokens=512
+        )
+
+        ai_text = response.choices[0].message.content.strip()
+
+        # 解析 AI 回應的 JSON
+        # 嘗試從代碼塊中提取 JSON
+        if "```json" in ai_text:
+            ai_text = ai_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in ai_text:
+            ai_text = ai_text.split("```")[1].split("```")[0].strip()
+
+        parsed = json.loads(ai_text)
+
+    except json.JSONDecodeError:
+        # AI 未回傳標準 JSON，使用原始文字作為關鍵字搜尋
+        parsed = {
+            "intent": "route_search",
+            "route_number": "",
+            "operator": "",
+            "origin": "",
+            "destination": "",
+            "stop_name": "",
+            "keywords": [query],
+            "summary": query
+        }
+    except Exception as e:
+        return {
+            "error": f"AI API 呼叫失敗：{str(e)}",
+            "query": query,
+            "hint": "請確認 AI_API_KEY、AI_BASE_URL 設定正確"
+        }
+
+    lang = language if language in ["zh", "en"] else "zh"
+    route_results = []
+    stop_results = []
+
+    intent = parsed.get("intent", "route_search")
+    route_number = parsed.get("route_number", "").strip()
+    operator = parsed.get("operator", "").strip()
+    origin = parsed.get("origin", "").strip()
+    destination = parsed.get("destination", "").strip()
+    stop_name = parsed.get("stop_name", "").strip()
+    keywords = parsed.get("keywords", [])
+
+    # 1. 按路線編號搜尋
+    if route_number:
+        for route_id, route_info in hketa.route_list.items():
+            parts = route_id.split("+")
+            rn = parts[0] if parts else ""
+            if route_number.upper() == rn.upper():
+                ops = [co.lower() for co in route_info.get("co", [])]
+                if not operator or operator.lower() in ops:
+                    route_results.append({
+                        "route_id": route_id,
+                        "route_number": rn,
+                        "operators": route_info.get("co", []),
+                        "origin_zh": route_info.get("orig", {}).get("zh", ""),
+                        "destination_zh": route_info.get("dest", {}).get("zh", ""),
+                        "origin_en": route_info.get("orig", {}).get("en", ""),
+                        "destination_en": route_info.get("dest", {}).get("en", ""),
+                    })
+
+    # 2. 按起點/終點搜尋
+    if (origin or destination) and len(route_results) < 20:
+        origin_lower = origin.lower()
+        dest_lower = destination.lower()
+        for route_id, route_info in hketa.route_list.items():
+            if operator:
+                ops = [co.lower() for co in route_info.get("co", [])]
+                if operator.lower() not in ops:
+                    continue
+            orig_zh = route_info.get("orig", {}).get("zh", "").lower()
+            orig_en = route_info.get("orig", {}).get("en", "").lower()
+            dest_zh = route_info.get("dest", {}).get("zh", "").lower()
+            dest_en = route_info.get("dest", {}).get("en", "").lower()
+            origin_match = not origin or (origin_lower in orig_zh or origin_lower in orig_en)
+            dest_match = not destination or (dest_lower in dest_zh or dest_lower in dest_en)
+            if origin_match and dest_match:
+                parts = route_id.split("+")
+                rn = parts[0] if parts else ""
+                entry = {
+                    "route_id": route_id,
+                    "route_number": rn,
+                    "operators": route_info.get("co", []),
+                    "origin_zh": route_info.get("orig", {}).get("zh", ""),
+                    "destination_zh": route_info.get("dest", {}).get("zh", ""),
+                    "origin_en": route_info.get("orig", {}).get("en", ""),
+                    "destination_en": route_info.get("dest", {}).get("en", ""),
+                }
+                if entry not in route_results:
+                    route_results.append(entry)
+            if len(route_results) >= 20:
+                break
+
+    # 3. 按關鍵字廣義搜尋路線（用原始 query 及 keywords 搜尋起/終點名）
+    if len(route_results) < 5:
+        search_terms = [t.lower() for t in ([query] + keywords) if t]
+        for route_id, route_info in hketa.route_list.items():
+            if operator:
+                ops = [co.lower() for co in route_info.get("co", [])]
+                if operator.lower() not in ops:
+                    continue
+            orig_zh = route_info.get("orig", {}).get("zh", "").lower()
+            orig_en = route_info.get("orig", {}).get("en", "").lower()
+            dest_zh = route_info.get("dest", {}).get("zh", "").lower()
+            dest_en = route_info.get("dest", {}).get("en", "").lower()
+            text = f"{orig_zh} {orig_en} {dest_zh} {dest_en} {route_id.lower()}"
+            if any(term in text for term in search_terms):
+                parts = route_id.split("+")
+                rn = parts[0] if parts else ""
+                entry = {
+                    "route_id": route_id,
+                    "route_number": rn,
+                    "operators": route_info.get("co", []),
+                    "origin_zh": route_info.get("orig", {}).get("zh", ""),
+                    "destination_zh": route_info.get("dest", {}).get("zh", ""),
+                    "origin_en": route_info.get("orig", {}).get("en", ""),
+                    "destination_en": route_info.get("dest", {}).get("en", ""),
+                }
+                if entry not in route_results:
+                    route_results.append(entry)
+            if len(route_results) >= 20:
+                break
+
+    # 4. 按站點名稱搜尋
+    if stop_name or intent == "stop_search":
+        search_name = stop_name if stop_name else query
+        name_lower = search_name.lower()
+        for stop_id, stop_info in hketa.stop_list.items():
+            name_zh = stop_info.get("name", {}).get("zh", "").lower()
+            name_en = stop_info.get("name", {}).get("en", "").lower()
+            if name_lower in name_zh or name_lower in name_en:
+                stop_results.append({
+                    "stop_id": stop_id,
+                    "name_zh": stop_info.get("name", {}).get("zh", ""),
+                    "name_en": stop_info.get("name", {}).get("en", ""),
+                    "location": stop_info.get("location", {})
+                })
+            if len(stop_results) >= 10:
+                break
+
+    return {
+        "query": query,
+        "ai_analysis": {
+            "intent": parsed.get("intent", ""),
+            "summary": parsed.get("summary", ""),
+            "extracted": {
+                "route_number": route_number,
+                "operator": operator,
+                "origin": origin,
+                "destination": destination,
+                "stop_name": stop_name,
+                "keywords": keywords
+            }
+        },
+        "routes_found": len(route_results),
+        "routes": route_results[:20],
+        "stops_found": len(stop_results),
+        "stops": stop_results[:10],
+        "usage_tip": "使用 route_id 調用 get_route_stops() 查看站點，或 get_eta() 查詢即時到站時間"
+    }
+
 
 @mcp.tool(description="獲取 MCP 伺服器資訊")
 def get_server_info() -> dict:
