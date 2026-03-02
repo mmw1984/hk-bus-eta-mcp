@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # AI 智能檢索設定（OpenAI 格式，可透過環境變數自定義）
+ENABLE_AI_SEARCH = os.environ.get("ENABLE_AI_SEARCH", "").lower() in ("true", "1", "yes")
 AI_API_KEY = os.environ.get("AI_API_KEY", "")
 AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
 AI_MODEL = os.environ.get("AI_MODEL", "glm-4-flash")
@@ -705,7 +706,7 @@ def get_stop_info(stop_id: str) -> Dict[str, Any]:
     
     return stop_info
 
-@mcp.tool(description="AI 智能檢索：用自然語言搜尋香港交通路線和站點（需設定 AI_API_KEY 環境變數）")
+@mcp.tool(description="AI 智能檢索：用自然語言搜尋香港交通路線和站點（需啟用 ENABLE_AI_SEARCH=true 和設定 AI_API_KEY）")
 def ai_search(query: str, language: str = "zh") -> Dict[str, Any]:
     """
     使用 AI 理解自然語言查詢，智能搜尋香港交通路線和站點。
@@ -725,18 +726,27 @@ def ai_search(query: str, language: str = "zh") -> Dict[str, Any]:
         language: 返回結果語言（'zh' 或 'en'，預設 'zh'）
 
     環境變數（可在 .env 或 Vercel 設定）：
-        AI_API_KEY   - AI API 金鑰（必填）
-        AI_BASE_URL  - API 端點（預設：https://open.bigmodel.cn/api/paas/v4）
-        AI_MODEL     - 模型名稱（預設：glm-4-flash）
+        ENABLE_AI_SEARCH - 是否啟用 AI 搜尋（'true'、'1'、'yes' 啟用，預設關閉）
+        AI_API_KEY       - AI API 金鑰（必填）
+        AI_BASE_URL      - API 端點（預設：https://open.bigmodel.cn/api/paas/v4）
+        AI_MODEL         - 模型名稱（預設：glm-4-flash）
 
     返回：
         包含 AI 解析結果及匹配路線/站點資訊的字典
     """
+    if not ENABLE_AI_SEARCH:
+        return {
+            "error": "AI 智能檢索功能未啟用",
+            "detail": "請設定 ENABLE_AI_SEARCH=true 環境變數以啟用此功能",
+            "note": "此功能需要額外的 AI 服務成本，預設為關閉狀態"
+        }
+
     if not AI_API_KEY:
         return {
-            "error": "AI 功能未啟用",
-            "detail": "請設定 AI_API_KEY 環境變數以啟用 AI 智能檢索功能",
+            "error": "AI 功能配置不完整",
+            "detail": "請設定 AI_API_KEY 環境變數",
             "env_vars": {
+                "ENABLE_AI_SEARCH": "（必填）true、1 或 yes 啟用功能",
                 "AI_API_KEY": "（必填）AI API 金鑰",
                 "AI_BASE_URL": f"（選填）API 端點，預設：{AI_BASE_URL}",
                 "AI_MODEL": f"（選填）模型名稱，預設：{AI_MODEL}"
