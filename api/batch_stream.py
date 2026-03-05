@@ -27,7 +27,7 @@ except Exception as e:
     hketa = None
 
 
-def stream_batch_eta(route_ids: List[str], language: str = "en") -> Iterator[bytes]:
+def stream_batch_eta(route_ids: List[str], language: str = "zh") -> Iterator[bytes]:
     """
     Stream ETA updates for multiple routes with progress tracking.
     
@@ -179,7 +179,7 @@ def stream_live_updates(route_id: str, duration_seconds: int = 60, interval_seco
         while (time.time() - start_time) < duration_seconds:
             try:
                 # Fetch current ETA
-                etas = hketa.getEtas(route_id=route_id, seq=0, language="en")
+                etas = hketa.getEtas(route_id=route_id, seq=0, language="zh")
                 
                 update_count += 1
                 elapsed = int(time.time() - start_time)
@@ -247,7 +247,7 @@ class handler:
         if mode == 'batch':
             # Expect route_ids as comma-separated list
             route_ids_str = params.get('route_ids', '')
-            language = params.get('language', 'en')
+            language = params.get('language', 'zh')
             
             if not route_ids_str:
                 yield b'data: {"error": "route_ids parameter required (comma-separated)"}\n\n'

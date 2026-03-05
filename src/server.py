@@ -1,975 +1,458 @@
 #!/usr/bin/env python3
 import os
 import sys
-import json
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List
+
+from dotenv import load_dotenv
 from fastmcp import FastMCP
 from hk_bus_eta import HKEta
-from dotenv import load_dotenv
 
 load_dotenv()
 
-# AI 智能檢索設定（OpenAI 格式，可透過環境變數自定義）
-ENABLE_AI_SEARCH = os.environ.get("ENABLE_AI_SEARCH", "").lower() in ("true", "1", "yes")
-AI_API_KEY = os.environ.get("AI_API_KEY", "")
-AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
-AI_MODEL = os.environ.get("AI_MODEL", "glm-4-flash")
-
-# 初始化 FastMCP 伺服器
 mcp = FastMCP("香港交通 ETA")
 
-# 初始化 HKEta
-# 注意：HKEta 可能需要一些時間來初始化，因為它會獲取路線數據
 try:
     hketa = HKEta()
 except Exception as e:
     print(f"初始化 HKEta 時出錯: {e}", file=sys.stderr)
     hketa = None
 
-@mcp.tool(description="搜尋香港巴士或交通路線（所有營運商），按路線編號+方向分組顯示")
-def search_routes(keyword: str = "", operator: str = "") -> List[Dict[str, Any]]:
-    """
-    搜尋所有交通路線，可按關鍵字或營運商過濾。
-    每個路線的每個方向視為獨立條目，方便直接選擇查詢 ETA。
-    
-    參數：
-        keyword: 路線編號關鍵字（例如：'1', '962X', 'TCL'），留空則顯示所有
-        operator: 營運商過濾（'kmb', 'ctb', 'gmb', 'mtr', 'nlb' 等），留空則顯示所有
-    
-    返回：
-        路線列表，每個方向作為獨立條目，包含 route_id 可直接用於 get_route_all_stops_eta
-    """
-    if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
-    keyword_upper = keyword.upper() if keyword else ""
-    operator_lower = operator.lower() if operator else ""
-    routes = []
-    
-    for route_id, route_info in hketa.route_list.items():
-        # 過濾關鍵字
-        if keyword_upper and keyword_upper not in route_id:
-            continue
-        
-        # 過濾營運商
-        operators = [co.lower() for co in route_info.get("co", [])]
-        if operator_lower and operator_lower not in operators:
-            continue
-        
-        # 提取路線編號（route_id 格式：'1+1+起點+終點'）
-        parts = route_id.split('+')
-        route_number = parts[0] if len(parts) > 0 else route_id
-        
-        routes.append({
-            "route_id": route_id,
-            "route_number": route_number,
-            "operators": route_info.get("co", []),
-            "origin_zh": route_info.get("orig", {}).get("zh", ""),
-            "destination_zh": route_info.get("dest", {}).get("zh", ""),
-            "origin_en": route_info.get("orig", {}).get("en", ""),
-            "destination_en": route_info.get("dest", {}).get("en", ""),
-            "service_type": route_info.get("service_type", ""),
-            "description": f"{route_number} ({', '.join(route_info.get('co', []))}) {route_info.get('orig', {}).get('zh', '')} → {route_info.get('dest', {}).get('zh', '')}"
-        })
-    
-    # 限制結果數量
-    if len(routes) > 100:
-        return routes[:100]
-    
-    return routes
 
-@mcp.tool(description="獲取香港交通路線特定站點的預計到達時間（ETA）")
-def get_eta(route_id: str, seq: int = 0, language: str = "en") -> List[Dict[str, Any]]:
-    """
-    獲取指定路線的預計到達時間。
-    
-    參數：
-        route_id: 路線的唯一識別碼（例如：'1+1+CHUK YUEN ESTATE+STAR FERRY'）
-        seq: 站點序號（預設為 0，即第一個站點）
-        language: 備註語言（'en' 或 'zh'）
-    """
-    if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
-    try:
-        etas = hketa.getEtas(route_id=route_id, seq=seq, language=language)
-        return etas
-    except Exception as e:
-        return [{"error": str(e)}]
+def _err(message: str) -> Dict[str, str]:
+    return {"error": message}
 
-@mcp.tool(description="獲取特定路線的詳細資料，包括其站點")
-def get_route_details(route_id: str) -> Dict[str, Any]:
-    """獲取路線的詳細資訊。"""
-    if not hketa:
-        return {"error": "HKEta 未初始化"}
-    
-    route_info = hketa.route_list.get(route_id)
-    if not route_info:
-        return {"error": "找不到路線"}
-    
-    return route_info
 
-@mcp.tool(description="獲取路線的所有站點及其名稱和序號")
-def get_route_stops(route_id: str, language: str = "en") -> List[Dict[str, Any]]:
-    """
-    獲取路線的詳細站點資訊，包括站點名稱。
-    
-    參數：
-        route_id: 路線的唯一識別碼（例如：'1+1+CHUK YUEN ESTATE+STAR FERRY'）
-        language: 站點名稱語言（'en' 或 'zh'，預設為 'en'）
-    
-    返回：
-        包含站點序號、站點名稱和位置的列表
-    """
-    if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
-    route_info = hketa.route_list.get(route_id)
-    if not route_info:
-        return [{"error": "找不到路線"}]
-    
-    stops_result = []
-    
-    # 獲取此路線每個營運公司的站點
-    for company, stop_ids in route_info.get("stops", {}).items():
-        for idx, stop_id in enumerate(stop_ids):
-            stop_info = hketa.stop_list.get(stop_id)
-            if stop_info:
-                stops_result.append({
-                    "seq": idx,
-                    "stop_id": stop_id,
-                    "name": stop_info.get("name", {}).get(language, "未知"),
-                    "name_en": stop_info.get("name", {}).get("en", ""),
-                    "name_zh": stop_info.get("name", {}).get("zh", ""),
-                    "location": stop_info.get("location", {}),
-                    "company": company
-                })
-    
-    return stops_result
+def _as_list_err(message: str) -> List[Dict[str, str]]:
+    return [{"error": message}]
 
-@mcp.tool(description="獲取各營運商特定站點的 ETA（九巴 KMB）")
-def get_kmb_eta(stop_id: str, route: str, service_type: str = "1", bound: str = "O") -> List[Dict[str, Any]]:
-    """
-    獲取九巴（KMB）特定站點的預計到達時間。
-    
-    參數：
-        stop_id: 站點 ID
-        route: 路線編號（例如：'1'）
-        service_type: 服務類型（預設為 '1'）
-        bound: 方向（'O' 為去程，'I' 為回程）
-    """
-    if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
-    try:
-        seq = 0  # 序號可以從路線資訊中獲取
-        etas = hketa.kmb(stop_id=stop_id, route=route, seq=seq, service_type=service_type, co="kmb", bound=bound)
-        return etas
-    except Exception as e:
-        return [{"error": str(e)}]
 
-@mcp.tool(description="獲取城巴/新巴（CTB）特定站點的 ETA")
-def get_ctb_eta(stop_id: str, route: str, bound: str = "outbound", seq: int = 0) -> List[Dict[str, Any]]:
-    """
-    獲取城巴/新巴（CTB）特定站點的預計到達時間。
-    
-    參數：
-        stop_id: 站點 ID
-        route: 路線編號
-        bound: 方向（'outbound' 或 'inbound'）
-        seq: 站點序號
-    """
-    if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
-    try:
-        etas = hketa.ctb(stop_id=stop_id, route=route, bound=bound, seq=seq)
-        return etas
-    except Exception as e:
-        return [{"error": str(e)}]
+def _normalize_limit(limit: int, default_value: int, max_value: int) -> int:
+    if limit <= 0:
+        return default_value
+    return min(limit, max_value)
 
-@mcp.tool(description="獲取專線小巴（GMB）特定站點的 ETA")
-def get_gmb_eta(gtfs_id: str, stop_id: str, bound: str = "1", seq: int = 0) -> List[Dict[str, Any]]:
-    """
-    獲取專線小巴（GMB）特定站點的預計到達時間。
-    
-    參數：
-        gtfs_id: GTFS 路線 ID（例如：'HKI-20' 或 '37M'）
-        stop_id: 站點 ID
-        bound: 方向（'1' 或 '2'）
-        seq: 站點序號
-    
-    注意：此方法可能不穩定，建議使用 get_eta() 通用方法配合完整的 route_id。
-    例如：get_eta(route_id="20+1+San Po Kong+Tsz Wan Shan (North) (Circular)", seq=6, language="zh")
-    """
-    if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
-    try:
-        # 記錄調試信息
-        print(f"[GMB ETA] 查詢: gtfs_id={gtfs_id}, stop_id={stop_id}, bound={bound}, seq={seq}", file=sys.stderr)
-        
-        etas = hketa.gmb(gtfs_id=gtfs_id, stop_id=stop_id, bound=bound, seq=seq)
-        
-        # 如果結果為空，嘗試使用通用方法
-        if not etas or len(etas) == 0:
-            print(f"[GMB ETA] 空結果 - 嘗試使用通用方法", file=sys.stderr)
-            
-            # 嘗試搜索匹配的 GMB 路線
-            route_number = gtfs_id.split('-')[-1] if '-' in gtfs_id else gtfs_id
-            matching_gmb_routes = []
-            
-            for route_id, route_info in hketa.route_list.items():
-                if route_number in route_id and 'gmb' in [co.lower() for co in route_info.get('co', [])]:
-                    matching_gmb_routes.append({
-                        "route_id": route_id,
-                        "origin_zh": route_info.get("orig", {}).get("zh", ""),
-                        "destination_zh": route_info.get("dest", {}).get("zh", "")
-                    })
-            
-            return [{
-                "info": "目前無可用的實時到站資料",
-                "reason": "此綠專小巴路線可能沒有 GPS 追蹤或當前時段無服務",
-                "suggestion": "建議使用 get_eta(route_id=..., seq=站點序號) 通用方法查詢",
-                "matching_gmb_routes": matching_gmb_routes[:5],
-                "example": "get_eta(route_id='20+1+San Po Kong+Tsz Wan Shan (North) (Circular)', seq=6, language='zh')"
-            }]
-        
-        return etas
-        
-    except KeyError as e:
-        # API 數據格式錯誤 - 嘗試使用通用方法
-        print(f"[GMB ETA] KeyError: {e} - 嘗試搜索替代路線", file=sys.stderr)
-        
-        # 搜索匹配的 GMB 路線
-        route_number = gtfs_id.split('-')[-1] if '-' in gtfs_id else gtfs_id
-        matching_gmb_routes = []
-        
-        for route_id, route_info in hketa.route_list.items():
-            if route_number in route_id and 'gmb' in [co.lower() for co in route_info.get('co', [])]:
-                matching_gmb_routes.append({
-                    "route_id": route_id,
-                    "origin_zh": route_info.get("orig", {}).get("zh", ""),
-                    "destination_zh": route_info.get("dest", {}).get("zh", "")
-                })
-        
-        return [{
-            "error": "直接 GMB API 查詢失敗",
-            "suggestion": "請使用 get_eta() 通用方法配合下列路線 ID",
-            "matching_gmb_routes": matching_gmb_routes[:5],
-            "example": "get_eta(route_id='20+1+San Po Kong+Tsz Wan Shan (North) (Circular)', seq=6, language='zh')"
-        }]
-    except Exception as e:
-        print(f"[GMB ETA] Exception: {type(e).__name__}: {e}", file=sys.stderr)
-        return [{
-            "error": str(e),
-            "error_type": type(e).__name__,
-            "suggestion": "請使用 search_routes_by_operator('gmb', '路線編號') 搜尋正確的路線 ID，然後使用 get_eta() 查詢"
-        }]
 
-@mcp.tool(description="獲取綠專小巴路線的站點序號信息（用於 get_eta 查詢）")
-def get_gmb_route_stops(route_number: str) -> List[Dict[str, Any]]:
-    """
-    搜索綠專小巴路線並返回所有站點及其序號。
-    
-    參數：
-        route_number: 路線編號（例如：'20', '37M'）
-    
-    返回：
-        找到的 GMB 路線及其站點列表，包含用於 get_eta() 查詢的 seq 序號
-    """
-    if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
-    route_number_upper = route_number.upper()
-    results = []
-    
-    for route_id, route_info in hketa.route_list.items():
-        # 檢查是否為 GMB 路線且匹配路線編號
-        operators = [co.lower() for co in route_info.get('co', [])]
-        if 'gmb' not in operators:
-            continue
-        
-        # 檢查路線編號匹配（路線 ID 格式: "20+1+San Po Kong+..."）
-        route_parts = route_id.split('+')
-        if len(route_parts) >= 1 and route_parts[0].upper() == route_number_upper:
-            # 獲取此路線的站點
-            stops_info = []
-            for company, stop_ids in route_info.get("stops", {}).items():
-                for seq, stop_id in enumerate(stop_ids):
-                    stop_data = hketa.stop_list.get(stop_id, {})
-                    stops_info.append({
-                        "seq": seq,
-                        "stop_id": stop_id,
-                        "name_zh": stop_data.get("name", {}).get("zh", ""),
-                        "name_en": stop_data.get("name", {}).get("en", ""),
-                        "location": stop_data.get("location", {})
-                    })
-            
-            results.append({
-                "route_id": route_id,
-                "origin_zh": route_info.get("orig", {}).get("zh", ""),
-                "destination_zh": route_info.get("dest", {}).get("zh", ""),
-                "origin_en": route_info.get("orig", {}).get("en", ""),
-                "destination_en": route_info.get("dest", {}).get("en", ""),
-                "stops": stops_info,
-                "usage_example": f"get_eta(route_id='{route_id}', seq=站點序號, language='zh')"
-            })
-    
-    if not results:
-        return [{
-            "error": f"找不到綠專小巴路線 {route_number}",
-            "suggestion": "請使用 search_routes_by_operator('gmb') 查看所有 GMB 路線"
-        }]
-    
-    return results
+def _route_number(route_id: str) -> str:
+    parts = route_id.split("+")
+    return parts[0] if parts else route_id
 
-@mcp.tool(description="獲取指定路線的所有站點列表及位置資訊（支援所有營運商）")
-def get_route_stops(route_id: str, language: str = "zh") -> Dict[str, Any]:
-    """
-    獲取任何路線的所有站點詳細資訊，包含站點名稱、序號和位置。
-    
-    參數：
-        route_id: 完整路線 ID（從 search_routes 獲取，格式：'1+1+起點+終點'）
-        language: 語言（'zh' 或 'en'）
-    
-    返回：
-        包含路線資訊和所有站點的字典，站點按 seq 順序排列
-    """
-    if not hketa:
-        return {"error": "HKEta 未初始化"}
-    
-    route_info = hketa.route_list.get(route_id)
-    if not route_info:
-        return {"error": f"找不到路線 ID: {route_id}"}
-    
-    stops_data = route_info.get("stops", {})
-    lang = language if language in ["zh", "en"] else "zh"
-    
-    stops_list = []
-    
-    # stops 結構是 {"營運商": [stop_id1, stop_id2, ...]}
-    for operator, stop_ids in stops_data.items():
-        if isinstance(stop_ids, list):
-            for seq, stop_id in enumerate(stop_ids):
-                stop_info = hketa.stop_list.get(stop_id, {})
-                
-                stops_list.append({
-                    "seq": seq,
-                    "stop_id": stop_id,
-                    "name": stop_info.get("name", {}).get(lang, ""),
-                    "name_zh": stop_info.get("name", {}).get("zh", ""),
-                    "name_en": stop_info.get("name", {}).get("en", ""),
-                    "location": stop_info.get("location", {}),
-                    "operator": operator
-                })
-    
-    # 按 seq 排序
-    stops_list.sort(key=lambda x: x["seq"])
-    
+
+def _route_text(route_id: str, route_info: Dict[str, Any], language: str) -> str:
+    orig = route_info.get("orig", {}).get(language, "")
+    dest = route_info.get("dest", {}).get(language, "")
+    return f"{route_id} {orig} {dest}".lower()
+
+
+def _route_result(route_id: str, route_info: Dict[str, Any], language: str) -> Dict[str, Any]:
     return {
         "route_id": route_id,
+        "route_number": _route_number(route_id),
         "operators": route_info.get("co", []),
-        "origin": route_info.get("orig", {}).get(lang, ""),
-        "destination": route_info.get("dest", {}).get(lang, ""),
+        "origin": route_info.get("orig", {}).get(language, ""),
+        "destination": route_info.get("dest", {}).get(language, ""),
         "origin_zh": route_info.get("orig", {}).get("zh", ""),
         "destination_zh": route_info.get("dest", {}).get("zh", ""),
         "origin_en": route_info.get("orig", {}).get("en", ""),
         "destination_en": route_info.get("dest", {}).get("en", ""),
-        "stops_count": len(stops_list),
-        "stops": stops_list
+        "service_type": route_info.get("service_type", ""),
     }
 
-@mcp.tool(description="一次性獲取路線所有站點的 ETA 預測時間（支援所有營運商）")
-def get_route_all_stops_eta(route_id: str, language: str = "zh") -> Dict[str, Any]:
-    """
-    查詢指定路線所有站點的 ETA，按站點順序排列，方便一次性查看整條路線的班次情況。
-    
-    參數：
-        route_id: 完整路線 ID（從 search_routes 獲取，格式：'1+1+起點+終點'）
-        language: 語言（'zh' 或 'en'）
-    
-    返回：
-        包含路線資訊和所有站點 ETA 的字典
-    """
+
+def _search_routes_core(keyword: str, operator: str, language: str, limit: int) -> List[Dict[str, Any]]:
     if not hketa:
-        return {"error": "HKEta 未初始化"}
-    
+        return _as_list_err("HKEta 未初始化")
+
+    normalized_limit = _normalize_limit(limit, 50, 200)
+    keyword_lower = keyword.strip().lower()
+    operator_lower = operator.strip().lower()
+
+    results: List[Dict[str, Any]] = []
+    for route_id, route_info in hketa.route_list.items():
+        operators = [co.lower() for co in route_info.get("co", [])]
+        if operator_lower and operator_lower not in operators:
+            continue
+
+        if keyword_lower:
+            text_zh = _route_text(route_id, route_info, "zh")
+            text_en = _route_text(route_id, route_info, "en")
+            if keyword_lower not in text_zh and keyword_lower not in text_en:
+                continue
+
+        results.append(_route_result(route_id, route_info, language))
+        if len(results) >= normalized_limit:
+            break
+
+    return results
+
+
+def _search_stops_core(keyword: str, language: str, limit: int) -> List[Dict[str, Any]]:
+    if not hketa:
+        return _as_list_err("HKEta 未初始化")
+
+    normalized_limit = _normalize_limit(limit, 20, 200)
+    keyword_lower = keyword.strip().lower()
+    if not keyword_lower:
+        return _as_list_err("keyword 不能為空")
+
+    results: List[Dict[str, Any]] = []
+    for stop_id, stop_info in hketa.stop_list.items():
+        name_zh = stop_info.get("name", {}).get("zh", "")
+        name_en = stop_info.get("name", {}).get("en", "")
+        if keyword_lower in name_zh.lower() or keyword_lower in name_en.lower():
+            results.append(
+                {
+                    "stop_id": stop_id,
+                    "name": stop_info.get("name", {}).get(language, ""),
+                    "name_zh": name_zh,
+                    "name_en": name_en,
+                    "location": stop_info.get("location", {}),
+                }
+            )
+            if len(results) >= normalized_limit:
+                break
+
+    return results
+
+
+def _route_stops_core(route_id: str, language: str, limit: int) -> Dict[str, Any]:
+    if not hketa:
+        return _err("HKEta 未初始化")
+
     route_info = hketa.route_list.get(route_id)
     if not route_info:
-        return {"error": f"找不到路線 ID: {route_id}"}
-    
-    lang = language if language in ["zh", "en"] else "zh"
-    stops_data = route_info.get("stops", {})
-    
-    # 收集所有站點的 ETA
-    all_stops_eta = []
-    
-    # stops 結構是 {"營運商": [stop_id1, stop_id2, ...]}
-    for operator, stop_ids in stops_data.items():
-        if isinstance(stop_ids, list):
-            for seq, stop_id in enumerate(stop_ids):
-                stop_info = hketa.stop_list.get(stop_id, {})
-                stop_name = stop_info.get("name", {}).get(lang, "")
-                
-                # 查詢該站點的 ETA
-                try:
-                    eta_data = hketa.getEtas(route_id=route_id, seq=seq, language=lang)
-                    
-                    # 提取 ETA 列表
-                    etas = []
-                    if isinstance(eta_data, list):
-                        for eta in eta_data:
-                            # 處理 remark 可能是字典或字串
-                            remark_data = eta.get("rmk", eta.get("remark", ""))
-                            if isinstance(remark_data, dict):
-                                remark = remark_data.get(lang, "")
-                            else:
-                                remark = remark_data
-                            
-                            etas.append({
-                                "time": eta.get("eta", eta.get("time", "")),
-                                "remark": remark,
-                                "operator": eta.get("co", ""),
-                                "destination": eta.get("dest", {}).get(lang, "") if isinstance(eta.get("dest"), dict) else eta.get("dest", "")
-                            })
-                    
-                    all_stops_eta.append({
-                        "seq": seq,
-                        "stop_id": stop_id,
-                        "stop_name": stop_name,
-                        "etas": etas,
-                        "has_eta": len(etas) > 0,
-                        "operator": operator
-                    })
-                except Exception as e:
-                    all_stops_eta.append({
-                        "seq": seq,
-                        "stop_id": stop_id,
-                        "stop_name": stop_name,
-                        "etas": [],
-                        "has_eta": False,
-                        "error": str(e),
-                        "operator": operator
-                    })
-    
-    # 按 seq 排序
-    all_stops_eta.sort(key=lambda x: x["seq"])
-    
-    # 統計有 ETA 的站點數
-    stops_with_eta = sum(1 for stop in all_stops_eta if stop["has_eta"])
-    
+        return _err(f"找不到路線 ID: {route_id}")
+
+    normalized_limit = _normalize_limit(limit, 9999, 9999)
+    stops: List[Dict[str, Any]] = []
+
+    for operator, stop_ids in route_info.get("stops", {}).items():
+        if not isinstance(stop_ids, list):
+            continue
+        for seq, stop_id in enumerate(stop_ids):
+            stop_info = hketa.stop_list.get(stop_id, {})
+            stops.append(
+                {
+                    "seq": seq,
+                    "operator": operator,
+                    "stop_id": stop_id,
+                    "name": stop_info.get("name", {}).get(language, ""),
+                    "name_zh": stop_info.get("name", {}).get("zh", ""),
+                    "name_en": stop_info.get("name", {}).get("en", ""),
+                    "location": stop_info.get("location", {}),
+                }
+            )
+            if len(stops) >= normalized_limit:
+                break
+        if len(stops) >= normalized_limit:
+            break
+
     return {
         "route_id": route_id,
+        "route_number": _route_number(route_id),
         "operators": route_info.get("co", []),
-        "origin": route_info.get("orig", {}).get(lang, ""),
-        "destination": route_info.get("dest", {}).get(lang, ""),
-        "total_stops": len(all_stops_eta),
-        "stops_with_eta": stops_with_eta,
-        "language": lang,
-        "stops_eta": all_stops_eta
+        "origin": route_info.get("orig", {}).get(language, ""),
+        "destination": route_info.get("dest", {}).get(language, ""),
+        "stops_count": len(stops),
+        "stops": stops,
     }
+
+
+def _get_eta_core(route_id: str, seq: int, language: str) -> List[Dict[str, Any]]:
+    if not hketa:
+        return _as_list_err("HKEta 未初始化")
+
+    try:
+        return hketa.getEtas(route_id=route_id, seq=seq, language=language)
+    except Exception as e:
+        return _as_list_err(str(e))
+
+
+def _all_stops_eta_core(route_id: str, language: str, max_stops: int) -> Dict[str, Any]:
+    if not hketa:
+        return _err("HKEta 未初始化")
+
+    route_info = hketa.route_list.get(route_id)
+    if not route_info:
+        return _err(f"找不到路線 ID: {route_id}")
+
+    normalized_limit = _normalize_limit(max_stops, 20, 200)
+    stops_eta: List[Dict[str, Any]] = []
+
+    for operator, stop_ids in route_info.get("stops", {}).items():
+        if not isinstance(stop_ids, list):
+            continue
+        for seq, stop_id in enumerate(stop_ids):
+            stop_info = hketa.stop_list.get(stop_id, {})
+            stop_name = stop_info.get("name", {}).get(language, "")
+            try:
+                etas = hketa.getEtas(route_id=route_id, seq=seq, language=language)
+            except Exception as e:
+                etas = [{"error": str(e)}]
+
+            stops_eta.append(
+                {
+                    "seq": seq,
+                    "operator": operator,
+                    "stop_id": stop_id,
+                    "stop_name": stop_name,
+                    "etas": etas,
+                }
+            )
+            if len(stops_eta) >= normalized_limit:
+                break
+        if len(stops_eta) >= normalized_limit:
+            break
+
+    return {
+        "route_id": route_id,
+        "route_number": _route_number(route_id),
+        "operators": route_info.get("co", []),
+        "origin": route_info.get("orig", {}).get(language, ""),
+        "destination": route_info.get("dest", {}).get(language, ""),
+        "max_stops": normalized_limit,
+        "returned_stops": len(stops_eta),
+        "stops_eta": stops_eta,
+    }
+
+
+@mcp.tool(description="中文：按關鍵字搜尋路線（可選營運商）")
+def search_routes_zh(keyword: str = "", operator: str = "", limit: int = 50) -> List[Dict[str, Any]]:
+    return _search_routes_core(keyword=keyword, operator=operator, language="zh", limit=limit)
+
+
+@mcp.tool(description="English: search routes by keyword (optional operator filter)")
+def search_routes_en(keyword: str = "", operator: str = "", limit: int = 50) -> List[Dict[str, Any]]:
+    return _search_routes_core(keyword=keyword, operator=operator, language="en", limit=limit)
+
+
+@mcp.tool(description="中文：按營運商搜尋路線")
+def search_routes_by_operator_zh(operator: str = "gmb", keyword: str = "", limit: int = 50) -> List[Dict[str, Any]]:
+    return _search_routes_core(keyword=keyword, operator=operator, language="zh", limit=limit)
+
+
+@mcp.tool(description="English: search routes by operator")
+def search_routes_by_operator_en(operator: str = "gmb", keyword: str = "", limit: int = 50) -> List[Dict[str, Any]]:
+    return _search_routes_core(keyword=keyword, operator=operator, language="en", limit=limit)
+
+
+@mcp.tool(description="中文：取得路線即時 ETA")
+def get_eta_zh(route_id: str, seq: int = 0) -> List[Dict[str, Any]]:
+    return _get_eta_core(route_id=route_id, seq=seq, language="zh")
+
+
+@mcp.tool(description="English: get route ETA")
+def get_eta_en(route_id: str, seq: int = 0) -> List[Dict[str, Any]]:
+    return _get_eta_core(route_id=route_id, seq=seq, language="en")
+
+
+@mcp.tool(description="中文：取得路線站點列表")
+def get_route_stops_zh(route_id: str, limit: int = 9999) -> Dict[str, Any]:
+    return _route_stops_core(route_id=route_id, language="zh", limit=limit)
+
+
+@mcp.tool(description="English: get route stops")
+def get_route_stops_en(route_id: str, limit: int = 9999) -> Dict[str, Any]:
+    return _route_stops_core(route_id=route_id, language="en", limit=limit)
+
+
+@mcp.tool(description="中文：批量取得路線多站 ETA（預設最多 20 站，較快）")
+def get_route_all_stops_eta_zh(route_id: str, max_stops: int = 20) -> Dict[str, Any]:
+    return _all_stops_eta_core(route_id=route_id, language="zh", max_stops=max_stops)
+
+
+@mcp.tool(description="English: batch ETA for multiple stops on one route (default up to 20 stops)")
+def get_route_all_stops_eta_en(route_id: str, max_stops: int = 20) -> Dict[str, Any]:
+    return _all_stops_eta_core(route_id=route_id, language="en", max_stops=max_stops)
+
+
+@mcp.tool(description="中文：搜尋站點")
+def search_stops_zh(keyword: str, limit: int = 20) -> List[Dict[str, Any]]:
+    return _search_stops_core(keyword=keyword, language="zh", limit=limit)
+
+
+@mcp.tool(description="English: search stops")
+def search_stops_en(keyword: str, limit: int = 20) -> List[Dict[str, Any]]:
+    return _search_stops_core(keyword=keyword, language="en", limit=limit)
+
+
+@mcp.tool(description="取得完整路線資料（原始 route_info）")
+def get_route_details(route_id: str) -> Dict[str, Any]:
+    if not hketa:
+        return _err("HKEta 未初始化")
+    route_info = hketa.route_list.get(route_id)
+    if not route_info:
+        return _err("找不到路線")
+    return route_info
+
+
+@mcp.tool(description="以路線編號找 route_id（例如 1、962X、K65）")
+def find_route_ids_by_number(route_number: str, operator: str = "", limit: int = 20) -> List[Dict[str, Any]]:
+    if not hketa:
+        return _as_list_err("HKEta 未初始化")
+
+    normalized_limit = _normalize_limit(limit, 20, 200)
+    number_upper = route_number.strip().upper()
+    operator_lower = operator.strip().lower()
+    if not number_upper:
+        return _as_list_err("route_number 不能為空")
+
+    results: List[Dict[str, Any]] = []
+    for route_id, route_info in hketa.route_list.items():
+        if _route_number(route_id).upper() != number_upper:
+            continue
+        operators = [co.lower() for co in route_info.get("co", [])]
+        if operator_lower and operator_lower not in operators:
+            continue
+        results.append(_route_result(route_id, route_info, "zh"))
+        if len(results) >= normalized_limit:
+            break
+
+    return results
+
+
+@mcp.tool(description="獲取各營運商特定站點的 ETA（九巴 KMB）")
+def get_kmb_eta(stop_id: str, route: str, service_type: str = "1", bound: str = "O") -> List[Dict[str, Any]]:
+    if not hketa:
+        return _as_list_err("HKEta 未初始化")
+    try:
+        return hketa.kmb(stop_id=stop_id, route=route, seq=0, service_type=service_type, co="kmb", bound=bound)
+    except Exception as e:
+        return _as_list_err(str(e))
+
+
+@mcp.tool(description="獲取城巴/新巴（CTB）特定站點的 ETA")
+def get_ctb_eta(stop_id: str, route: str, bound: str = "outbound", seq: int = 0) -> List[Dict[str, Any]]:
+    if not hketa:
+        return _as_list_err("HKEta 未初始化")
+    try:
+        return hketa.ctb(stop_id=stop_id, route=route, bound=bound, seq=seq)
+    except Exception as e:
+        return _as_list_err(str(e))
+
+
+@mcp.tool(description="獲取專線小巴（GMB）特定站點的 ETA")
+def get_gmb_eta(gtfs_id: str, stop_id: str, bound: str = "1", seq: int = 0) -> List[Dict[str, Any]]:
+    if not hketa:
+        return _as_list_err("HKEta 未初始化")
+    try:
+        return hketa.gmb(gtfs_id=gtfs_id, stop_id=stop_id, bound=bound, seq=seq)
+    except Exception as e:
+        return _as_list_err(str(e))
+
 
 @mcp.tool(description="獲取港鐵（MTR）特定站點的 ETA")
 def get_mtr_eta(stop_id: str, route: str, bound: str = "1") -> List[Dict[str, Any]]:
-    """
-    獲取港鐵（MTR）特定站點的預計到達時間。
-    
-    參數：
-        stop_id: 站點 ID
-        route: 路線編號
-        bound: 方向
-    """
     if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
+        return _as_list_err("HKEta 未初始化")
     try:
-        etas = hketa.mtr(stop_id=stop_id, route=route, bound=bound)
-        return etas
+        return hketa.mtr(stop_id=stop_id, route=route, bound=bound)
     except Exception as e:
-        return [{"error": str(e)}]
+        return _as_list_err(str(e))
+
 
 @mcp.tool(description="獲取輕鐵（Light Rail）特定站點的 ETA")
 def get_lightrail_eta(stop_id: str, route: str, dest_zh: str = "", dest_en: str = "") -> List[Dict[str, Any]]:
-    """
-    獲取輕鐵（Light Rail）特定站點的預計到達時間。
-    
-    參數：
-        stop_id: 站點 ID（例如：'LR100'）
-        route: 路線編號（例如：'505'）
-        dest_zh: 目的地中文名稱（例如：'三聖'）
-        dest_en: 目的地英文名稱（例如：'Sam Shing'）
-    
-    提示：建議使用 get_eta 並提供 route_id 來獲取輕鐵 ETA，更為簡單準確。
-    """
     if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
+        return _as_list_err("HKEta 未初始化")
     try:
-        # 構建 dest 字典，這是 hketa.lightrail 所需的格式
-        dest = {"zh": dest_zh, "en": dest_en}
-        etas = hketa.lightrail(stop_id=stop_id, route=route, dest=dest)
-        return etas
+        return hketa.lightrail(stop_id=stop_id, route=route, dest={"zh": dest_zh, "en": dest_en})
     except Exception as e:
-        return [{"error": str(e)}]
+        return _as_list_err(str(e))
 
-@mcp.tool(description="獲取輕鐵接駁巴士特定站點的 ETA")
-def get_lrtfeeder_eta(stop_id: str, route: str, language: str = "en") -> List[Dict[str, Any]]:
-    """
-    獲取輕鐵接駁巴士特定站點的預計到達時間。
-    
-    參數：
-        stop_id: 站點 ID（例如：'K65-U010'）
-        route: 路線編號（例如：'K65'）
-        language: 語言（'en' 或 'zh'）
-    
-    提示：建議使用 get_eta 並提供 route_id 來獲取輕鐵接駁巴士 ETA，更為簡單準確。
-    """
+
+@mcp.tool(description="中文：獲取輕鐵接駁巴士 ETA")
+def get_lrtfeeder_eta_zh(stop_id: str, route: str) -> List[Dict[str, Any]]:
     if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
+        return _as_list_err("HKEta 未初始化")
     try:
-        etas = hketa.lrtfeeder(stop_id=stop_id, route=route, language=language)
-        return etas
-    except KeyError as e:
-        return [{"error": f"找不到站點或路線資料: {str(e)}，請確認 stop_id 格式正確（例如：'K65-U010'）"}]
+        return hketa.lrtfeeder(stop_id=stop_id, route=route, language="zh")
     except Exception as e:
-        return [{"error": str(e)}]
+        return _as_list_err(str(e))
+
+
+@mcp.tool(description="English: get LRT feeder ETA")
+def get_lrtfeeder_eta_en(stop_id: str, route: str) -> List[Dict[str, Any]]:
+    if not hketa:
+        return _as_list_err("HKEta 未初始化")
+    try:
+        return hketa.lrtfeeder(stop_id=stop_id, route=route, language="en")
+    except Exception as e:
+        return _as_list_err(str(e))
+
 
 @mcp.tool(description="獲取新大嶼山巴士（NLB）特定站點的 ETA")
 def get_nlb_eta(stop_id: str, nlb_id: str) -> List[Dict[str, Any]]:
-    """
-    獲取新大嶼山巴士（NLB）特定站點的預計到達時間。
-    
-    參數：
-        stop_id: 站點 ID
-        nlb_id: NLB 路線 ID
-    """
     if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
+        return _as_list_err("HKEta 未初始化")
     try:
-        etas = hketa.nlb(stop_id=stop_id, nlb_id=nlb_id)
-        return etas
+        return hketa.nlb(stop_id=stop_id, nlb_id=nlb_id)
     except Exception as e:
-        return [{"error": str(e)}]
+        return _as_list_err(str(e))
 
-@mcp.tool(description="獲取所有路線列表")
-def get_all_routes() -> Dict[str, Any]:
-    """
-    獲取所有可用的路線列表。
-    
-    返回：
-        包含所有路線 ID 及其資訊的字典
-    """
-    if not hketa:
-        return {"error": "HKEta 未初始化"}
-    
-    return {"total_routes": len(hketa.route_list), "sample_routes": list(hketa.route_list.keys())[:50]}
 
-@mcp.tool(description="獲取所有站點列表")
-def get_all_stops() -> Dict[str, Any]:
-    """
-    獲取所有可用的站點列表。
-    
-    返回：
-        包含所有站點 ID 的資訊
-    """
+@mcp.tool(description="獲取所有路線數量與 sample")
+def get_all_routes(limit: int = 50) -> Dict[str, Any]:
     if not hketa:
-        return {"error": "HKEta 未初始化"}
-    
-    return {"total_stops": len(hketa.stop_list), "sample_stops": list(hketa.stop_list.keys())[:50]}
+        return _err("HKEta 未初始化")
+    normalized_limit = _normalize_limit(limit, 50, 500)
+    return {
+        "total_routes": len(hketa.route_list),
+        "sample_routes": list(hketa.route_list.keys())[:normalized_limit],
+    }
 
-@mcp.tool(description="搜尋站點資訊")
-def search_stops(keyword: str, language: str = "en") -> List[Dict[str, Any]]:
-    """
-    根據關鍵字搜尋站點。
-    
-    參數：
-        keyword: 搜尋關鍵字
-        language: 搜尋語言（'en' 或 'zh'）
-    
-    返回：
-        符合條件的站點列表
-    """
-    if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
-    keyword_lower = keyword.lower()
-    results = []
-    
-    for stop_id, stop_info in hketa.stop_list.items():
-        name = stop_info.get("name", {}).get(language, "")
-        if keyword_lower in name.lower():
-            results.append({
-                "stop_id": stop_id,
-                "name_en": stop_info.get("name", {}).get("en", ""),
-                "name_zh": stop_info.get("name", {}).get("zh", ""),
-                "location": stop_info.get("location", {})
-            })
-            if len(results) >= 20:  # 限制結果數量
-                break
-    
-    return results
 
-@mcp.tool(description="搜尋特定營運商的路線（例如：綠專小巴 GMB）")
-def search_routes_by_operator(operator: str = "gmb", keyword: str = "") -> List[Dict[str, Any]]:
-    """
-    根據營運商搜尋路線，可選擇性地過濾關鍵字。
-    
-    參數：
-        operator: 營運商代碼（'gmb', 'kmb', 'ctb', 'nlb', 'mtr', 'lightrail', 'lrtfeeder'）
-        keyword: 可選的路線編號關鍵字（例如：'37M', '20'）
-    
-    返回：
-        符合條件的路線列表
-    """
+@mcp.tool(description="獲取所有站點數量與 sample")
+def get_all_stops(limit: int = 50) -> Dict[str, Any]:
     if not hketa:
-        return [{"error": "HKEta 未初始化"}]
-    
-    operator_lower = operator.lower()
-    keyword_upper = keyword.upper() if keyword else ""
-    results = []
-    
-    for route_id, route_info in hketa.route_list.items():
-        operators = [co.lower() for co in route_info.get("co", [])]
-        
-        # 檢查營運商匹配
-        if operator_lower in operators:
-            # 如果有關鍵字，檢查是否匹配
-            if not keyword_upper or keyword_upper in route_id:
-                results.append({
-                    "route_id": route_id,
-                    "operators": route_info.get("co", []),
-                    "origin_zh": route_info.get("orig", {}).get("zh", ""),
-                    "destination_zh": route_info.get("dest", {}).get("zh", ""),
-                    "origin_en": route_info.get("orig", {}).get("en", ""),
-                    "destination_en": route_info.get("dest", {}).get("en", ""),
-                    "service_type": route_info.get("service_type", "")
-                })
-                
-                if len(results) >= 50:  # 限制結果數量
-                    break
-    
-    return results
+        return _err("HKEta 未初始化")
+    normalized_limit = _normalize_limit(limit, 50, 500)
+    return {
+        "total_stops": len(hketa.stop_list),
+        "sample_stops": list(hketa.stop_list.keys())[:normalized_limit],
+    }
+
 
 @mcp.tool(description="獲取香港公眾假期列表")
 def get_holidays() -> List[str]:
-    """
-    獲取香港公眾假期列表。
-    
-    返回：
-        假期日期列表（格式：YYYYMMDD）
-    """
     if not hketa:
         return ["錯誤：HKEta 未初始化"]
-    
     return hketa.holidays
+
 
 @mcp.tool(description="獲取站點映射資訊")
 def get_stop_mapping(stop_id: str) -> Dict[str, Any]:
-    """
-    獲取站點在不同營運商之間的映射關係。
-    
-    參數：
-        stop_id: 站點 ID
-    
-    返回：
-        站點在各營運商的對應資訊
-    """
     if not hketa:
-        return {"error": "HKEta 未初始化"}
-    
+        return _err("HKEta 未初始化")
     mapping = hketa.stop_map.get(stop_id)
     if not mapping:
-        return {"error": "找不到站點映射"}
-    
+        return _err("找不到站點映射")
     return {"stop_id": stop_id, "mappings": mapping}
+
 
 @mcp.tool(description="獲取站點詳細資訊")
 def get_stop_info(stop_id: str) -> Dict[str, Any]:
-    """
-    獲取特定站點的詳細資訊。
-    
-    參數：
-        stop_id: 站點 ID
-    
-    返回：
-        站點的詳細資訊
-    """
     if not hketa:
-        return {"error": "HKEta 未初始化"}
-    
+        return _err("HKEta 未初始化")
     stop_info = hketa.stop_list.get(stop_id)
     if not stop_info:
-        return {"error": "找不到站點"}
-    
+        return _err("找不到站點")
     return stop_info
-
-@mcp.tool(description="AI 智能檢索：用自然語言搜尋香港交通路線和站點（需啟用 ENABLE_AI_SEARCH=true 和設定 AI_API_KEY）")
-def ai_search(query: str, language: str = "zh") -> Dict[str, Any]:
-    """
-    使用 AI 理解自然語言查詢，智能搜尋香港交通路線和站點。
-
-    支援各種自然語言查詢，例如：
-    - "從旺角去銅鑼灣有什麼巴士？"
-    - "九巴 1 號路線終點站"
-    - "MTR Tsuen Wan Line stops"
-    - "bus from Mong Kok to Causeway Bay"
-    - "去機場有什麼路線"
-
-    AI 會自動解析查詢意圖，提取路線編號、起點、終點、站點名稱等資訊，
-    再調用相應搜尋功能，返回最相關的結果。
-
-    參數：
-        query: 自然語言查詢（中文或英文均可）
-        language: 返回結果語言（'zh' 或 'en'，預設 'zh'）
-
-    環境變數（可在 .env 或 Vercel 設定）：
-        ENABLE_AI_SEARCH - 是否啟用 AI 搜尋（'true'、'1'、'yes' 啟用，預設關閉）
-        AI_API_KEY       - AI API 金鑰（必填）
-        AI_BASE_URL      - API 端點（預設：https://open.bigmodel.cn/api/paas/v4）
-        AI_MODEL         - 模型名稱（預設：glm-4-flash）
-
-    返回：
-        包含 AI 解析結果及匹配路線/站點資訊的字典
-    """
-    if not ENABLE_AI_SEARCH:
-        return {
-            "error": "AI 智能檢索功能未啟用",
-            "detail": "請設定 ENABLE_AI_SEARCH=true 環境變數以啟用此功能",
-            "note": "此功能需要額外的 AI 服務成本，預設為關閉狀態"
-        }
-
-    if not AI_API_KEY:
-        return {
-            "error": "AI 功能配置不完整",
-            "detail": "請設定 AI_API_KEY 環境變數",
-            "env_vars": {
-                "ENABLE_AI_SEARCH": "（必填）true、1 或 yes 啟用功能",
-                "AI_API_KEY": "（必填）AI API 金鑰",
-                "AI_BASE_URL": f"（選填）API 端點，預設：{AI_BASE_URL}",
-                "AI_MODEL": f"（選填）模型名稱，預設：{AI_MODEL}"
-            }
-        }
-
-    if not hketa:
-        return {"error": "HKEta 未初始化"}
-
-    try:
-        from openai import OpenAI
-    except ImportError:
-        return {"error": "openai 套件未安裝，請執行 pip install openai"}
-
-    # 構建 AI 系統提示
-    system_prompt = """你是香港公共交通搜尋助手。分析用戶的查詢，提取以下資訊並以 JSON 格式回應：
-
-{
-  "intent": "route_search|stop_search|eta_query|general_info",
-  "route_number": "路線編號（如有），例如 '1', '962X', 'TCL'",
-  "operator": "營運商（如有）：kmb/ctb/gmb/mtr/nlb/lightrail/lrtfeeder",
-  "origin": "出發地（中文或英文）",
-  "destination": "目的地（中文或英文）",
-  "stop_name": "站點名稱（如有）",
-  "keywords": ["其他相關搜尋關鍵字"],
-  "summary": "用一句話說明用戶的需求"
-}
-
-欄位說明：
-- intent: route_search（搜尋路線）、stop_search（搜尋站點）、eta_query（查詢到站時間）、general_info（一般資訊）
-- 未提及的欄位留空字串 "" 或空陣列 []
-- keywords 提取可用於搜尋的中英文關鍵字
-- 只回傳 JSON，不要其他文字"""
-
-    try:
-        client = OpenAI(api_key=AI_API_KEY, base_url=AI_BASE_URL)
-        response = client.chat.completions.create(
-            model=AI_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query}
-            ],
-            temperature=0.1,
-            max_tokens=512
-        )
-
-        ai_text = response.choices[0].message.content.strip()
-
-        # 解析 AI 回應的 JSON
-        # 嘗試從代碼塊中提取 JSON
-        if "```json" in ai_text:
-            ai_text = ai_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in ai_text:
-            ai_text = ai_text.split("```")[1].split("```")[0].strip()
-
-        parsed = json.loads(ai_text)
-
-    except json.JSONDecodeError:
-        # AI 未回傳標準 JSON，使用原始文字作為關鍵字搜尋
-        parsed = {
-            "intent": "route_search",
-            "route_number": "",
-            "operator": "",
-            "origin": "",
-            "destination": "",
-            "stop_name": "",
-            "keywords": [query],
-            "summary": query
-        }
-    except Exception as e:
-        return {
-            "error": f"AI API 呼叫失敗：{str(e)}",
-            "query": query,
-            "hint": "請確認 AI_API_KEY、AI_BASE_URL 設定正確"
-        }
-
-    lang = language if language in ["zh", "en"] else "zh"
-    route_results = []
-    stop_results = []
-
-    intent = parsed.get("intent", "route_search")
-    route_number = parsed.get("route_number", "").strip()
-    operator = parsed.get("operator", "").strip()
-    origin = parsed.get("origin", "").strip()
-    destination = parsed.get("destination", "").strip()
-    stop_name = parsed.get("stop_name", "").strip()
-    keywords = parsed.get("keywords", [])
-
-    # 1. 按路線編號搜尋
-    if route_number:
-        for route_id, route_info in hketa.route_list.items():
-            parts = route_id.split("+")
-            rn = parts[0] if parts else ""
-            if route_number.upper() == rn.upper():
-                ops = [co.lower() for co in route_info.get("co", [])]
-                if not operator or operator.lower() in ops:
-                    route_results.append({
-                        "route_id": route_id,
-                        "route_number": rn,
-                        "operators": route_info.get("co", []),
-                        "origin_zh": route_info.get("orig", {}).get("zh", ""),
-                        "destination_zh": route_info.get("dest", {}).get("zh", ""),
-                        "origin_en": route_info.get("orig", {}).get("en", ""),
-                        "destination_en": route_info.get("dest", {}).get("en", ""),
-                    })
-
-    # 2. 按起點/終點搜尋
-    if (origin or destination) and len(route_results) < 20:
-        origin_lower = origin.lower()
-        dest_lower = destination.lower()
-        for route_id, route_info in hketa.route_list.items():
-            if operator:
-                ops = [co.lower() for co in route_info.get("co", [])]
-                if operator.lower() not in ops:
-                    continue
-            orig_zh = route_info.get("orig", {}).get("zh", "").lower()
-            orig_en = route_info.get("orig", {}).get("en", "").lower()
-            dest_zh = route_info.get("dest", {}).get("zh", "").lower()
-            dest_en = route_info.get("dest", {}).get("en", "").lower()
-            origin_match = not origin or (origin_lower in orig_zh or origin_lower in orig_en)
-            dest_match = not destination or (dest_lower in dest_zh or dest_lower in dest_en)
-            if origin_match and dest_match:
-                parts = route_id.split("+")
-                rn = parts[0] if parts else ""
-                entry = {
-                    "route_id": route_id,
-                    "route_number": rn,
-                    "operators": route_info.get("co", []),
-                    "origin_zh": route_info.get("orig", {}).get("zh", ""),
-                    "destination_zh": route_info.get("dest", {}).get("zh", ""),
-                    "origin_en": route_info.get("orig", {}).get("en", ""),
-                    "destination_en": route_info.get("dest", {}).get("en", ""),
-                }
-                if entry not in route_results:
-                    route_results.append(entry)
-            if len(route_results) >= 20:
-                break
-
-    # 3. 按關鍵字廣義搜尋路線（用原始 query 及 keywords 搜尋起/終點名）
-    if len(route_results) < 5:
-        search_terms = [t.lower() for t in ([query] + keywords) if t]
-        for route_id, route_info in hketa.route_list.items():
-            if operator:
-                ops = [co.lower() for co in route_info.get("co", [])]
-                if operator.lower() not in ops:
-                    continue
-            orig_zh = route_info.get("orig", {}).get("zh", "").lower()
-            orig_en = route_info.get("orig", {}).get("en", "").lower()
-            dest_zh = route_info.get("dest", {}).get("zh", "").lower()
-            dest_en = route_info.get("dest", {}).get("en", "").lower()
-            text = f"{orig_zh} {orig_en} {dest_zh} {dest_en} {route_id.lower()}"
-            if any(term in text for term in search_terms):
-                parts = route_id.split("+")
-                rn = parts[0] if parts else ""
-                entry = {
-                    "route_id": route_id,
-                    "route_number": rn,
-                    "operators": route_info.get("co", []),
-                    "origin_zh": route_info.get("orig", {}).get("zh", ""),
-                    "destination_zh": route_info.get("dest", {}).get("zh", ""),
-                    "origin_en": route_info.get("orig", {}).get("en", ""),
-                    "destination_en": route_info.get("dest", {}).get("en", ""),
-                }
-                if entry not in route_results:
-                    route_results.append(entry)
-            if len(route_results) >= 20:
-                break
-
-    # 4. 按站點名稱搜尋
-    if stop_name or intent == "stop_search":
-        search_name = stop_name if stop_name else query
-        name_lower = search_name.lower()
-        for stop_id, stop_info in hketa.stop_list.items():
-            name_zh = stop_info.get("name", {}).get("zh", "").lower()
-            name_en = stop_info.get("name", {}).get("en", "").lower()
-            if name_lower in name_zh or name_lower in name_en:
-                stop_results.append({
-                    "stop_id": stop_id,
-                    "name_zh": stop_info.get("name", {}).get("zh", ""),
-                    "name_en": stop_info.get("name", {}).get("en", ""),
-                    "location": stop_info.get("location", {})
-                })
-            if len(stop_results) >= 10:
-                break
-
-    return {
-        "query": query,
-        "ai_analysis": {
-            "intent": parsed.get("intent", ""),
-            "summary": parsed.get("summary", ""),
-            "extracted": {
-                "route_number": route_number,
-                "operator": operator,
-                "origin": origin,
-                "destination": destination,
-                "stop_name": stop_name,
-                "keywords": keywords
-            }
-        },
-        "routes_found": len(route_results),
-        "routes": route_results[:20],
-        "stops_found": len(stop_results),
-        "stops": stop_results[:10],
-        "usage_tip": "使用 route_id 調用 get_route_stops() 查看站點，或 get_eta() 查詢即時到站時間"
-    }
 
 
 @mcp.tool(description="獲取 MCP 伺服器資訊")
-def get_server_info() -> dict:
-    """獲取 MCP 伺服器的資訊。"""
+def get_server_info() -> Dict[str, Any]:
     return {
         "server_name": "香港交通 ETA MCP 伺服器",
-        "version": "2.0.0",
-        "author": "Manus AI",
-        "description": "提供香港公共交通即時到站時間，使用 data.gov.hk 和 hkbus.app 數據。",
+        "version": "3.0.0",
+        "description": "語言分離（zh/en）工具設計，支援香港公共交通即時 ETA。",
         "python_version": sys.version.split()[0],
         "supported_operators": ["KMB", "CTB", "GMB", "MTR", "LightRail", "LRTFeeder", "NLB"],
         "total_routes": len(hketa.route_list) if hketa else 0,
-        "total_stops": len(hketa.stop_list) if hketa else 0
+        "total_stops": len(hketa.stop_list) if hketa else 0,
     }
 
+
 if __name__ == "__main__":
-    # 使用 PORT 環境變數進行部署（例如在 Vercel 或 Render 上）
     port = int(os.environ.get("PORT", 8000))
     host = "0.0.0.0"
 
@@ -979,5 +462,5 @@ if __name__ == "__main__":
         transport="http",
         host=host,
         port=port,
-        stateless_http=True
+        stateless_http=True,
     )

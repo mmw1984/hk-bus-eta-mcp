@@ -25,7 +25,7 @@ except Exception as e:
     hketa = None
 
 
-def stream_eta_updates(route_id: str, seq: int = 0, language: str = "en") -> Iterator[bytes]:
+def stream_eta_updates(route_id: str, seq: int = 0, language: str = "zh") -> Iterator[bytes]:
     """
     Stream ETA updates for a specific route and stop.
     
@@ -59,7 +59,7 @@ def stream_eta_updates(route_id: str, seq: int = 0, language: str = "en") -> Ite
         yield f'data: {error_data}\n\n'.encode('utf-8')
 
 
-def stream_route_stops(route_id: str, language: str = "en") -> Iterator[bytes]:
+def stream_route_stops(route_id: str, language: str = "zh") -> Iterator[bytes]:
     """
     Stream route stops information progressively.
     
@@ -197,7 +197,7 @@ class handler:
         if action == 'eta':
             route_id = params.get('route_id', '')
             seq = int(params.get('seq', 0))
-            language = params.get('language', 'en')
+            language = params.get('language', 'zh')
             
             if not route_id:
                 yield b'data: {"error": "route_id parameter required"}\n\n'
@@ -207,7 +207,7 @@ class handler:
         
         elif action == 'stops':
             route_id = params.get('route_id', '')
-            language = params.get('language', 'en')
+            language = params.get('language', 'zh')
             
             if not route_id:
                 yield b'data: {"error": "route_id parameter required"}\n\n'

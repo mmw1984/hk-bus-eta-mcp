@@ -1,151 +1,84 @@
-# 香港交通 ETA MCP 伺服器
+# HK Bus ETA MCP
 
-這是一個模型上下文協議（MCP）伺服器，提供香港公共交通的即時預計到達時間（ETA）。它使用 [FastMCP](https://github.com/jlowin/fastmcp) 框架和 [hk-bus-eta](https://github.com/hkbus/hk-bus-eta) 庫構建。
+香港交通 ETA 的 MCP 伺服器（FastMCP + hk-bus-eta）。
 
-## 功能特色
+本版本重點：
+- 移除不必要與重複代碼。
+- 工具命名改為「一語言一工具」（`_zh` / `_en`）。
+- API 以簡單、低參數、快速回應為優先。
 
-- **搜尋路線**：使用關鍵字查找路線 ID，每個方向獨立顯示（例如："962X"、"TCL"）。
-- **優化的 ETA 工作流程**：新增便捷工具，支援一鍵查詢整條路線所有站點的 ETA。
-- **獲取 ETA**：獲取特定路線和站點的即時到達時間。
-- **路線詳情**：獲取路線的詳細資訊，包括其站點。
-- **路線站點**：獲取路線的所有站點及其中英文名稱。
-- **批量查詢**：一次性獲取路線所有站點的 ETA，按順序排列。
-- **多營運商支援**：支援九巴（KMB）、城巴/新巴（CTB）、專線小巴（GMB）、港鐵（MTR）、輕鐵（Light Rail）、輕鐵接駁巴士（LRT Feeder）、新大嶼山巴士（NLB）。
-- **站點搜尋**：根據名稱搜尋站點。
-- **假期資訊**：獲取香港公眾假期列表。
-- **🚀 串流 API**：支援 Server-Sent Events (SSE) 的即時串流響應，提供進度更新和批次處理功能。
+## 快速開始
 
-## 工具列表
-
-### 路線相關
-- `search_routes(keyword: str, operator: str)` - 🆕 搜尋路線，每個方向獨立顯示，可按營運商過濾
-- `get_route_details(route_id: str)` - 獲取路線資訊
-- `get_route_stops(route_id: str, language: str)` - 🆕 獲取任何路線的所有站點（支援所有營運商）
-- `get_route_all_stops_eta(route_id: str, language: str)` - 🆕 一次性查詢路線所有站點的 ETA
-- `get_all_routes()` - 獲取所有可用路線列表
-- `search_routes_by_operator(operator: str, keyword: str)` - 按營運商搜尋路線
-
-### ETA 查詢（通用）
-- `get_eta(route_id: str, seq: int, language: str)` - 獲取即時 ETA
-
-### ETA 查詢（各營運商）
-- `get_kmb_eta(stop_id, route, service_type, bound)` - 九巴 ETA
-- `get_ctb_eta(stop_id, route, bound, seq)` - 城巴/新巴 ETA
-- `get_gmb_eta(gtfs_id, stop_id, bound, seq)` - 專線小巴 ETA
-- `get_mtr_eta(stop_id, route, bound)` - 港鐵 ETA
-- `get_lightrail_eta(stop_id, route, dest)` - 輕鐵 ETA
-- `get_lrtfeeder_eta(stop_id, route, language)` - 輕鐵接駁巴士 ETA
-- `get_nlb_eta(stop_id, nlb_id)` - 新大嶼山巴士 ETA
-
-### 站點相關
-- `search_stops(keyword: str, language: str)` - 搜尋站點
-- `get_stop_info(stop_id: str)` - 獲取站點詳細資訊
-- `get_all_stops()` - 獲取所有站點列表
-- `get_stop_mapping(stop_id: str)` - 獲取站點在不同營運商之間的映射
-
-### 其他
-- `get_holidays()` - 獲取香港公眾假期列表
-- `get_server_info()` - 獲取伺服器元數據
-
-## 串流 API
-
-此專案支援使用 Server-Sent Events (SSE) 的串流響應，提供以下功能：
-
-### 端點
-
-- **`/stream`** - 單一路線串流（ETA、站點、搜尋）
-- **`/batch`** - 批次處理與進度追蹤（批次 ETA、附近站點、即時更新）
-
-### 使用範例
-
-```javascript
-// 串流 ETA 更新
-const eventSource = new EventSource('/stream?action=eta&route_id=ROUTE_ID');
-eventSource.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  console.log('收到:', data);
-};
+```bash
+pip install -r requirements.txt
+python src/server.py
 ```
 
-詳細文檔請參閱 [STREAMING_API.md](STREAMING_API.md)
+本地 MCP 端點：`http://localhost:8000/mcp`
 
-### 互動式示範
+## 設計原則
 
-開啟 `streaming_demo.html` 在瀏覽器中查看串流 API 的即時示範。
+- 語言分離：中文與英文使用不同工具，避免 `language` 參數混淆。
+- 快速回應：搜尋與批量工具都有 `limit` 或 `max_stops` 上限。
+- 明確命名：工具名稱直接表達用途，不需要閱讀長文檔才能用。
+
+## 工具總覽
+
+### 路線搜尋
+- `search_routes_zh(keyword="", operator="", limit=50)`
+- `search_routes_en(keyword="", operator="", limit=50)`
+- `search_routes_by_operator_zh(operator="gmb", keyword="", limit=50)`
+- `search_routes_by_operator_en(operator="gmb", keyword="", limit=50)`
+- `find_route_ids_by_number(route_number, operator="", limit=20)`
+
+### ETA（通用）
+- `get_eta_zh(route_id, seq=0)`
+- `get_eta_en(route_id, seq=0)`
+
+### 路線站點
+- `get_route_stops_zh(route_id, limit=9999)`
+- `get_route_stops_en(route_id, limit=9999)`
+- `get_route_all_stops_eta_zh(route_id, max_stops=20)`
+- `get_route_all_stops_eta_en(route_id, max_stops=20)`
+
+### 站點搜尋
+- `search_stops_zh(keyword, limit=20)`
+- `search_stops_en(keyword, limit=20)`
+
+### 營運商專用 ETA
+- `get_kmb_eta(stop_id, route, service_type="1", bound="O")`
+- `get_ctb_eta(stop_id, route, bound="outbound", seq=0)`
+- `get_gmb_eta(gtfs_id, stop_id, bound="1", seq=0)`
+- `get_mtr_eta(stop_id, route, bound="1")`
+- `get_lightrail_eta(stop_id, route, dest_zh="", dest_en="")`
+- `get_lrtfeeder_eta_zh(stop_id, route)`
+- `get_lrtfeeder_eta_en(stop_id, route)`
+- `get_nlb_eta(stop_id, nlb_id)`
+
+### 其他資料工具
+- `get_route_details(route_id)`
+- `get_all_routes(limit=50)`
+- `get_all_stops(limit=50)`
+- `get_stop_info(stop_id)`
+- `get_stop_mapping(stop_id)`
+- `get_holidays()`
+- `get_server_info()`
+
+## 建議工作流
+
+1. 用 `search_routes_zh` 或 `find_route_ids_by_number` 找 `route_id`。
+2. 用 `get_route_stops_zh` 看站序（`seq`）。
+3. 用 `get_eta_zh(route_id, seq)` 查單站 ETA。
+4. 若要快速總覽，用 `get_route_all_stops_eta_zh(route_id, max_stops=20)`。
+
+## Streaming 端點
+
+- `/stream`：SSE 單路線串流
+- `/batch`：SSE 批量/附近站點/Live 更新
+
+詳見：`STREAMING_API.md`
 
 ## 部署
 
-### Vercel
-
-此專案已配置為可在 Vercel 上部署，包含串流支援。
-
-要部署您自己的實例：
-1. Fork 此儲存庫
-2. 將其匯入到 Vercel
-3. Vercel 將自動部署為 Python 無伺服器函數，並啟用串流功能
-
-在 Claude Desktop 中使用，請將以下內容添加到您的配置：
-```json
-{
-  "mcpServers": {
-    "hk-transport": {
-      "url": "https://hk-transport-mcp-updated.vercel.app/mcp"
-    }
-  }
-}
-```
-
-### 串流端點
-
-部署後，您可以訪問以下串流端點：
-- `https://your-domain.vercel.app/stream` - 單一路線串流
-- `https://your-domain.vercel.app/batch` - 批次處理串流
-
-### 本地開發
-
-1. 安裝依賴套件：
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. 執行伺服器：
-   ```bash
-   python src/server.py
-   ```
-
-3. 使用 MCP Inspector 測試：
-   ```bash
-   npx @modelcontextprotocol/inspector http://localhost:8000/mcp
-   ```
-
-## 使用指南
-
-### 快速開始：查詢路線 ETA
-
-```python
-# 步驟 1: 搜尋路線（例如：小巴 20 號）
-search_routes(keyword="20", operator="gmb")
-
-# 步驟 2: 一次性獲取所有站點 ETA
-get_route_all_stops_eta(
-    route_id="20+1+San Po Kong+Tsz Wan Shan (North) (Circular)",
-    language="zh"
-)
-```
-
-### 進階用法
-
-查看 [ETA_WORKFLOW_GUIDE.md](./ETA_WORKFLOW_GUIDE.md) 了解：
-- 優化的查詢工作流程
-- 批量 ETA 查詢技巧
-- 多營運商路線比較
-- 效能優化建議
-
-
-## 致謝
-
-- 數據由 [data.gov.hk](https://data.gov.hk) 提供。
-- 由 [hkbus.app](https://github.com/hkbus) 標準化。
-- 使用 [FastMCP](https://github.com/jlowin/fastmcp) 構建。
-- 模板由 [Interaction Company of California](https://github.com/InteractionCo) 提供。
-
+- Vercel：已包含 `api/mcp.py`、`api/stream.py`、`api/batch_stream.py`。
+- 若要接 Claude Desktop，將伺服器 URL 指向 `/mcp`。
